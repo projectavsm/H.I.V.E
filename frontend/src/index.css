@@ -1,0 +1,48 @@
+:root {
+  /* Core Theme Matrix */
+  --bg-darker: #0b0f19;      /* Ultra-deep Space Blue background */
+  --bg-surface: #121826;     /* Elevated Dashboard Panel Blue */
+  --border-glow: #1e293b;    /* Clean Structural Border Line */
+  
+  /* Accent Matrix */
+  --maroon-primary: #800020;  /* Deep Matte Maroon for structural headers/buttons */
+  --maroon-glow: #bd0838;     /* Hot Maroon/Crimson for high-priority alerts/active state */
+  
+  /* Neon Energy Highlights */
+  --neon-cyan: #00f2fe;       /* Electric Neon Blue for live stream data tokens */
+  --neon-purple: #9d4edd;     /* Cyber Neon Purple for terminal feedback flags */
+  
+  /* Text Profiles */
+  --text-main: #f1f5f9;       /* Off-White clean reading profile */
+  --text-muted: #94a3b8;      /* Soft Slate Grey for sub-labels and secondary metadata */
+
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  background-color: var(--bg-darker);
+  color: var(--text-main);
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg-darker);
+  overflow: hidden; /* Prevents awkward dual browser scrollbars */
+}
+
+/* Custom Minimalist Cyber Terminal Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg-darker);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-glow);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--maroon-primary);
+}
