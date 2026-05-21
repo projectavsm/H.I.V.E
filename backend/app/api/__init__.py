@@ -1,10 +1,16 @@
 import json
 import logging
+import os
+import shutil
 import httpx
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, Request, HTTPException, UploadFile, File
 from fastapi.responses import StreamingResponse
 from app.models import ChatCompletionRequest
 from app.config import settings
+
+# 🧵 IMPORT ADVANCED CONTEXT HARVESTING SUITES
+from app.services.rag_service import LocalRAGEngine
+from app.tools.web_tool import AutonomousWebScraper
 
 # Initialize high-performance logger mapped to the H.I.V.E Router channel
 logger = logging.getLogger("H.I.V.E.Router")
@@ -12,6 +18,20 @@ logger = logging.getLogger("H.I.V.E.Router")
 # Instantiate the API Router asset cleanly
 router = APIRouter()
 
+# Instantiate the local vector database retrieval model
+rag_engine = LocalRAGEngine()
+
+# 📥 CONFIGURE LOCAL STORAGE VAULT DIRECTORY CONTRACT
+VAULT_DIR = os.path.join(os.getcwd(), "storage_vault")
+
+# Ensure the physical drop zone exists at system boot runtime
+if not os.path.exists(VAULT_DIR):
+    os.makedirs(VAULT_DIR)
+    logger.info(f"📁 Initialized empty document ingestion target matrix at: {VAULT_DIR}")
+
+# =========================================================================
+# 1. ASYNCHRONOUS OLLAMA STREAM GENERATOR INTERFACE
+# =========================================================================
 async def stream_ollama_tokens(payload: dict):
     """
     Asynchronous generator connecting directly to the local Ollama daemon socket.
@@ -63,18 +83,19 @@ async def stream_ollama_tokens(payload: dict):
             logger.critical(f"Runtime communication collapse: {str(e)}")
             yield f"data: {json.dumps({'error': 'Local AI engine runtime is currently offline.'})}\n\n"
 
+# =========================================================================
+# 2. CORE CHAT COMPLETION & CONCURRENT CONTEXT HARVESTING ROUTE
+# =========================================================================
 @router.post("/chat/stream")
 async def chat_completion_endpoint(request: Request, body: ChatCompletionRequest):
     """
     Hardened API Gateway Route enforcing Pydantic structural validation,
     applying proactive server-side FIFO context sliding-window pruning,
-    and reserving execution space for localized Top-K RAG injections.
+    and executing simultaneous Local RAG Ingestion & Web Scraping loops.
     """
     # -------------------------------------------------------------------------
     # DEFENSE LAYER 1: MIDDLEWARE-LEVEL SLIDING CONTEXT WINDOW (FIFO PRUNING)
     # -------------------------------------------------------------------------
-    # Restrict active historic elements to a strict count limit. This keeps the prompt size 
-    # lean and prevents prompt-bloat from expanding the KV cache into shared GPU memory.
     MAX_HISTORIC_MESSAGES = 10
     messages_payload = [msg.model_dump() for msg in body.messages]
     
@@ -83,46 +104,85 @@ async def chat_completion_endpoint(request: Request, body: ChatCompletionRequest
             f"⚠️ Context bloat caught ({len(messages_payload)} messages). "
             f"Pruning oldest records to match strict FIFO VRAM safety bounds."
         )
-        # Keep only the N most recent message nodes
         messages_payload = messages_payload[-MAX_HISTORIC_MESSAGES:]
 
-    logger.info(f"⚡ Processing inference stream. Active payload count: {len(messages_payload)}")
+    # Extract the raw statement of the active user query turn
+    last_user_message = messages_payload[-1]["content"] if messages_payload else ""
+    logger.info(f"⚡ Processing core inference stream for turn query: '{last_user_message[:40]}...'")
     
-    # -------------------------------------------------------------------------
-    # DEFENSE LAYER 2: TOP-K RAG SERVICE INJECTION PIPELINE PRESET (FUTURE PHASE)
-    # -------------------------------------------------------------------------
-    # [ARCHITECTURAL CONTRACT]: When ChromaDB/FAISS vector indexes are attached next, 
-    # query results must be restricted to a hard cap of K=3 chunks max (500 chars/chunk).
-    # Those 3 retrieved text nodes will be appended directly below this point into the 
-    # messages_payload array as context data frames before passing upstream to the model.
+    # =========================================================================
+    # REINFORCED DUAL-HARVESTING ENGINE IMPLEMENTATION (THE SWAP)
+    # =========================================================================
+    
+    # 🧵 INTERCEPT PATH A: Query Local Semantic Vector Store (RAG)
+    rag_context = ""
+    try:
+        # Pass the extracted user message turn to your similarity engine
+        raw_rag_data = await rag_engine.query_knowledge_base(last_user_message)
+        
+        # Guard check: Ensure content isn't just an empty container or None string
+        if raw_rag_data and len(str(raw_rag_data).strip()) > 0:
+            rag_context = f"\n[VERIFIED LOCAL RAG FILE CONTEXT]:\n{raw_rag_data}\n"
+            logger.info("📂 RAG Match: Local semantic context successfully extracted from vector database memory store.")
+        else:
+            logger.warning("⚠️ RAG Warning: Vector search executed successfully but found 0 matching text blocks inside storage_vault.")
+    except Exception as e:
+        logger.error(f"❌ RAG Retrieval internal fault: {str(e)}")
+        
+    # 🧵 INTERCEPT PATH B: Deploy Asynchronous Web Scraper (Agent Trigger Words)
+    web_context = ""
+    trigger_words = ["web", "live", "current", "search", "latest", "google"]
+    if any(word in last_user_message.lower() for word in trigger_words):
+        try:
+            logger.info(f"🌐 Scraper Match: Target trigger detected. Dispatching DuckDuckGo scraper loop...")
+            raw_web_data = await AutonomousWebScraper.fetch_live_web_context(last_user_message)
+            if raw_web_data:
+                web_context = f"\n[LIVE WEB SEARCH CONTEXT]:\n{raw_web_data}\n"
+        except Exception as e:
+            logger.error(f"❌ Web Scraper execution internal fault: {str(e)}")
 
     # -------------------------------------------------------------------------
-    # DEFENSE LAYER 3: HARDENED ENVIRONMENT-AWARE HARDWARE LIMITS
+    # DEFENSE LAYER 2: HARDENED ENVIRONMENT-AWARE HARDWARE LIMITS
     # -------------------------------------------------------------------------
-    # Explicitly configure options to keep model execution inside the 8GB physical VRAM pool.
     ollama_payload = {
         "model": settings.OLLAMA_MODEL,
         "messages": messages_payload,
         "stream": True,
         "options": {
-            "num_ctx": 4096,      # Limit total token pool allocation for the memory context cache
-            "temperature": 0.4,   # Keep reasoning path deterministic and professional
-            "num_predict": 1024   # Cap the output response length allowed per user turn
+            "num_ctx": 4096,      # Limit total token pool allocation
+            "temperature": 0.4,   # Keep reasoning path deterministic
+            "num_predict": 1024   # Cap the output response length
         }
     }
-    
-    # -------------------------------------------------------------------------
-    # CORE RE-ALIGNMENT: IMMUTABLE SYSTEM PROMPT ANCHORING
-    # -------------------------------------------------------------------------
-    # Always insert the overarching system-level baseline instructions at Index 0.
-    # This prevents your FIFO sliding logic from accidentally pruning away the core H.I.V.E identity.
-    if body.system_prompt:
-        ollama_payload["messages"].insert(0, {
-            "role": "system",
-            "content": body.system_prompt
-        })
 
-    # Return the real-time stream with forced low-latency cache proxy bypass controls
+    # =========================================================================
+    # CONTEXT RE-ALIGNMENT MATRIX WITH COMPLIANT SYSTEM DIRECTIVES
+    # =========================================================================
+    base_system_prompt = body.system_prompt or "You are H.I.V.E., a hardened local AI orchestration assistant."
+    
+    augmented_system_instructions = (
+        f"{base_system_prompt}\n\n"
+        f"CRITICAL SYSTEM DIRECTIVE:\n"
+        f"You are running within local machine limits. Prioritize facts, metrics, and data provided "
+        f"in the context blocks below over your pre-trained textbook base weights. If the data is present, "
+        f"use it as your absolute source-of-truth.\n"
+        f"STRICT WEB RULE: When responding to a live search or web query, use ONLY the specific text strings "
+        f"provided inside the [LIVE WEB SEARCH CONTEXT] block below. Do not invent news headlines or fallback to historical data loops.\n"
+        f"{rag_context}"
+        f"{web_context}"
+    ) 
+    
+    # Inject the final compiled instruction dictionary straight into index position 0
+    ollama_payload["messages"].insert(0, {
+        "role": "system",
+        "content": augmented_system_instructions
+    })
+    
+    logger.info(f"💾 System context array compiled successfully. Total injected payload length: {len(augmented_system_instructions)} chars.")
+
+    # -------------------------------------------------------------------------
+    # RESPONSE GENERATION OUTPUT STREAM TRANSFERS
+    # -------------------------------------------------------------------------
     return StreamingResponse(
         stream_ollama_tokens(ollama_payload),
         media_type="text/event-stream",
@@ -132,3 +192,45 @@ async def chat_completion_endpoint(request: Request, body: ChatCompletionRequest
             "X-Accel-Buffering": "no"  # Disables proxy buffering to force instant UI token updates
         }
     )
+
+# =========================================================================
+# 3. REAL-TIME UI KNOWLEDGE INGESTION PIPELINE (FILE UPLOADER)
+# =========================================================================
+@router.post("/upload")
+async def upload_document_endpoint(file: UploadFile = File(...)):
+    """
+    Secure file upload interceptor receiving binary file data frames via the UI,
+    writing them safely to storage_vault, and executing real-time vector indexing.
+    """
+    valid_extensions = (".txt", ".md", ".pdf")
+    ext = os.path.splitext(file.filename)[1].lower()
+    
+    if ext not in valid_extensions:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Unsupported format standard. Matrix only permits: {', '.join(valid_extensions)}"
+        )
+    
+    target_path = os.path.join(VAULT_DIR, file.filename)
+    logger.info(f"📥 Incoming UI upload detected: {file.filename}. Staging data frame stream...")
+    
+    try:
+        # Write the uploaded file blocks down to the secure vault directory disk layer
+        with open(target_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+            
+        logger.info(f"💾 Staged file saved locally. Deploying real-time semantic chunking...")
+        
+        # Instantly compile vectors into your database without requiring admin_ingest.py scripts
+        await rag_engine.ingest_document(target_path)
+        
+        return {
+            "status": "success",
+            "filename": file.filename,
+            "detail": "Document committed to local system vector storage map successfully."
+        }
+    except Exception as e:
+        logger.error(f"❌ Real-time UI ingestion failure for {file.filename}: {str(e)}")
+        if os.path.exists(target_path):
+            os.remove(target_path)  # Clean up partial fragments upon failure conditions
+        raise HTTPException(status_code=500, detail=f"Internal database ingestion compilation error: {str(e)}")
