@@ -1,13 +1,23 @@
 import { useState, useCallback } from 'react';
 
 // Define strict interfaces mirroring our validated API backend expectations
+export interface Citation {
+  source: string;
+  score: number;
+}
+
 export interface Message {
   role: 'user' | 'assistant' | 'system';
   content: string;
+  citations?: Citation[];
 }
 
 interface StreamOptions {
   systemPrompt?: string;
+  rag_mode?: 'global' | 'strict' | 'off';
+  target_file?: string | null;
+  temperature?: number;
+  model?: string;
 }
 
 // Define explicit model structure for internal telemetry updates
@@ -25,16 +35,22 @@ export const useOllamaStream = (backendUrl: string = 'http://127.0.0.1:8000/api/
   const [streamData, setStreamData] = useState<string>('');
   const [isStreaming, setIsStreaming] = useState<boolean>(false);
   const [streamError, setStreamError] = useState<string | null>(null);
-  // NEW: Added state manager to capture middleware instrumentation metrics
+  
+  // Captures structural database metrics and live text updates emitted down the wire
   const [telemetryData, setTelemetryData] = useState<TelemetryMetrics | null>(null);
+  const [statusUpdate, setStatusUpdate] = useState<string | null>(null);
 
   // Return a promise resolving to the fully accumulated assistant string or null on failure
-  const executeStream = useCallback(async (messages: Message[], options?: StreamOptions): Promise<string | null> => {
+  const executeStream = useCallback(async (
+    messages: Message[], 
+    options?: StreamOptions,
+    onCitations?: (citations: Citation[]) => void
+  ): Promise<string | null> => {
     setIsStreaming(true);
     setStreamError(null);
     setStreamData('');
-    // Clear out telemetry state on initialization of a fresh turn payload
     setTelemetryData(null);
+    setStatusUpdate("Initializing transaction channel...");
     
     // In-memory tracker to collect all text tokens synchronously outside of the React render loop cycle
     let fullyAccumulatedText = '';
@@ -47,7 +63,11 @@ export const useOllamaStream = (backendUrl: string = 'http://127.0.0.1:8000/api/
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
+          model: options?.model || 'llama3.1',
           messages: messages,
+          temperature: options?.temperature ?? 0.4,
+          rag_mode: options?.rag_mode || 'global',
+          target_file: options?.target_file || null,
           system_prompt: options?.systemPrompt || '',
         }),
       });
@@ -90,7 +110,17 @@ export const useOllamaStream = (backendUrl: string = 'http://127.0.0.1:8000/api/
               continue;
             }
 
-            // NEW: Intercept isolated telemetry packets before processing tokens
+            // Extract custom data frames based on contract properties
+            if (parsedChunk.status_update) {
+              setStatusUpdate(parsedChunk.status_update);
+              continue;
+            }
+
+            if (parsedChunk.citations) {
+              if (onCitations) onCitations(parsedChunk.citations);
+              continue;
+            }
+
             if (parsedChunk.telemetry) {
               setTelemetryData(parsedChunk.telemetry);
               continue; // Intercepted cleanly, bypass token compiler paths
@@ -103,10 +133,11 @@ export const useOllamaStream = (backendUrl: string = 'http://127.0.0.1:8000/api/
             }
 
             if (parsedChunk.done === true) {
+              setStatusUpdate(null);
               break;
             }
-          } catch (e) {
-            console.warn('Skipping unparsable line chunk frame alignment.', e);
+          } catch  {
+            // Ignore incomplete multi-byte framing issues or parsing failures silently
           }
         }
       }
@@ -115,6 +146,7 @@ export const useOllamaStream = (backendUrl: string = 'http://127.0.0.1:8000/api/
       return fullyAccumulatedText;
 
     } catch (err: unknown) {
+      console.error("Stream break error:", err);
       // Safely verify if the caught error matches a standard JavaScript Error instance object
       if (err instanceof Error) {
         setStreamError(err.message);
@@ -123,6 +155,7 @@ export const useOllamaStream = (backendUrl: string = 'http://127.0.0.1:8000/api/
       } else {
         setStreamError('A catastrophic transport failure occurred during token parsing.');
       }
+      setStatusUpdate(null);
       return null;
     } finally {
       setIsStreaming(false);
@@ -133,11 +166,13 @@ export const useOllamaStream = (backendUrl: string = 'http://127.0.0.1:8000/api/
     streamData,
     isStreaming,
     streamError,
-    telemetryData, // NEW: Exposed down to App.tsx / layout nodes
+    telemetryData,
+    statusUpdate, // Exposed to UI viewports to render the animated agent thinking status blocks
     executeStream,
     clearStream: () => {
       setStreamData('');
       setTelemetryData(null);
+      setStatusUpdate(null);
     }
   };
 };

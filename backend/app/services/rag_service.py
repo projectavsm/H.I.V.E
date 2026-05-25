@@ -1,7 +1,5 @@
 import os
-import json
-import numpy as np
-import httpx
+import chromadb
 from pypdf import PdfReader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from app.config import settings  # Import the configuration singleton
@@ -14,7 +12,6 @@ except ImportError:
 # RESOLVED: Pointing to explicit IPv4 literal via settings to prevent Windows 11 loopback resolution drops
 OLLAMA_URL = f"{settings.OLLAMA_BASE_URL}/api/embeddings"
 EMBED_MODEL = "all-minilm"  # Ensure you ran `ollama pull all-minilm`
-VECTOR_STORE_PATH = os.path.join(os.getcwd(), "vector_store", "knowledge_base.json")
 
 class LocalRAGEngine:
     def __init__(self, chunk_size=500, chunk_overlap=50):
@@ -24,20 +21,25 @@ class LocalRAGEngine:
             length_function=len,
             is_separator_regex=False
         )
-        self.db_memory = self._load_vector_db()
+        # Initialize Persistent Chroma Client
+        self.db_path = os.path.join(os.getcwd(), "vector_store", "chroma_db")
+        self.chroma_client = chromadb.PersistentClient(path=self.db_path)
+        
+        # Get or create our knowledge collection
+        self.collection = self.chroma_client.get_or_create_collection(
+            name="hive_knowledge_base",
+            metadata={"hnsw:space": "cosine"} # Explicitly use Cosine Similarity
+        )
+        self.embeddings_url = OLLAMA_URL
+        self.embed_model = EMBED_MODEL
 
-    def _load_vector_db(self):
-        # Guarantee that parent vectors directory maps out perfectly to avoid IO Error Drops
-        os.makedirs(os.path.dirname(VECTOR_STORE_PATH), exist_ok=True)
-        if os.path.exists(VECTOR_STORE_PATH):
-            with open(VECTOR_STORE_PATH, "r") as f:
-                return json.load(f)
-        return []
-
-    def _save_vector_db(self):
-        os.makedirs(os.path.dirname(VECTOR_STORE_PATH), exist_ok=True)
-        with open(VECTOR_STORE_PATH, "w") as f:
-            json.dump(self.db_memory, f, indent=2)
+    async def _get_single_embedding(self, text: str) -> list:
+        import httpx
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(self.embeddings_url, json={"model": self.embed_model, "prompt": text})
+            if response.status_code == 200:
+                return response.json()["embedding"]
+            raise Exception(f"Ollama embedding failure: {response.status_code}")
 
     def extract_text(self, file_path: str) -> str:
         ext = os.path.splitext(file_path)[1].lower()
@@ -58,55 +60,75 @@ class LocalRAGEngine:
             
         raise ValueError(f"Unsupported storage format layout: {ext}")
 
-    async def get_embedding(self, text: str) -> list:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(OLLAMA_URL, json={"model": EMBED_MODEL, "prompt": text})
-            if response.status_code == 200:
-                return response.json()["embedding"]
-            raise Exception(f"Ollama vector generation fault error code: {response.status_code}")
-
     async def ingest_document(self, file_path: str):
-        print(f"[RAG] Compiling vector matrices for: {file_path}")
+        file_name = os.path.basename(file_path)
+        print(f"[CHROMA] Compiling vector matrices for: {file_path}")
+        
         raw_text = self.extract_text(file_path)
         chunks = self.splitter.split_text(raw_text)
         
-        indexed_count = 0
+        documents = []
+        metadatas = []
+        ids = []
+        
+        idx = 0
         for chunk in chunks:
             # 🛡️ THE TEXT GUARD LAYER: Reject white-spaces, isolated characters, or structural margin layout noise
             cleaned_chunk = chunk.strip()
-            if not cleaned_chunk or len(cleaned_chunk) < 15: 
+            if not cleaned_chunk or len(cleaned_chunk) < 15:
                 continue
-                
-            vector = await self.get_embedding(cleaned_chunk)
-            self.db_memory.append({
-                "source": os.path.basename(file_path),
-                "text": cleaned_chunk,
-                "vector": vector
-            })
-            indexed_count += 1
             
-        self._save_vector_db()
-        print(f"[RAG] Ingestion matrix sequence finalized. Accumulated {indexed_count} valid structural fragments.")
+            documents.append(cleaned_chunk)
+            metadatas.append({"source": file_name})
+            ids.append(f"{file_name}_{idx}")
+            idx += 1
 
-    async def query_knowledge_base(self, user_prompt: str, top_k: int = 2) -> str:
-        if not self.db_memory: 
-            return ""
-        
-        query_vector = np.array(await self.get_embedding(user_prompt))
-        scored_chunks = []
+        if documents:
+            # Generate embeddings asynchronously in batches
+            embeddings = []
+            for doc in documents:
+                emb = await self._get_single_embedding(doc)
+                embeddings.append(emb)
 
-        for item in self.db_memory:
-            item_vector = np.array(item["vector"])
-            # Compute structural Cosine Similarity dot products
-            similarity = np.dot(query_vector, item_vector) / (np.linalg.norm(query_vector) * np.linalg.norm(item_vector))
-            scored_chunks.append((similarity, item["text"]))
+            # Insert natively into persistent ChromaDB
+            self.collection.add(
+                embeddings=embeddings,
+                documents=documents,
+                metadatas=metadatas,
+                ids=ids
+            )
+        print(f"[CHROMA] Ingestion matrix sequence finalized. Registered {len(documents)} valid structural fragments for {file_name}")
 
-        # Sort descending by correlation score
-        scored_chunks.sort(key=lambda x: x[0], reverse=True)
+    def get_all_ingested_files(self) -> list:
+        """Helper to return list of unique files inside the Document Vault"""
+        existing = self.collection.get(include=["metadatas"])
+        if not existing or not existing["metadatas"]:
+            return []
+        unique_files = list(set([m["source"] for m in existing["metadatas"] if "source" in m]))
+        return unique_files
+
+    async def query_knowledge_base(self, user_prompt: str, top_k: int = 2, target_file: str = None) -> list:
+        """Queries vector store with optional file-specific metadata filtering."""
+        query_vector = await self._get_single_embedding(user_prompt)
         
-        # Fixed the tuple index extraction alignment bug (score is x[0], text string is x[1])
-        relevant_matches = [text for score, text in scored_chunks[:top_k] if score > 0.4]
+        # Build metadata filter if a specific file is selected in the Vault
+        where_filter = {"source": target_file} if target_file else None
         
-        if relevant_matches:
-            return "\n[LOCAL DOCUMENT MATRIX CONTEXT]:\n" + "\n---\n".join(relevant_matches)
-        return ""
+        results = self.collection.query(
+            query_embeddings=[query_vector],
+            n_results=top_k,
+            where=where_filter,
+            include=["documents", "metadatas", "distances"]
+        )
+        
+        compiled_contexts = []
+        if results and results["documents"] and results["documents"][0]:
+            for i in range(len(results["documents"][0])):
+                score = 1.0 - results["distances"][0][i]  # Convert distance to cosine similarity
+                if score > 0.4:
+                    compiled_contexts.append({
+                        "text": results["documents"][0][i],
+                        "source": results["metadatas"][0][i]["source"],
+                        "score": round(score, 2)
+                    })
+        return compiled_contexts

@@ -8,16 +8,31 @@ import 'prismjs/components/prism-javascript';
 import 'prismjs/components/prism-bash';
 
 import { useOllamaStream } from './hooks/useOllamaStream';
-import type { Message } from './hooks/useOllamaStream';
+import type { Message, Citation } from './hooks/useOllamaStream';
 
 export default function App() {
-  // NEW: Extracted telemetryData safely from our modernized custom stream hook
-  const { streamData, isStreaming, streamError, telemetryData, executeStream, clearStream } = useOllamaStream();
+  // NEW: Extracted statusUpdate, telemetryData safely from our modernized custom stream hook
+  const { 
+    streamData, 
+    isStreaming, 
+    streamError, 
+    telemetryData, 
+    statusUpdate, 
+    executeStream, 
+    clearStream 
+  } = useOllamaStream();
+  
   const [userInput, setUserInput] = useState<string>('');
   
   // UI Ingestion Status States
   const [uploadStatus, setUploadStatus] = useState<string>('READY');
   const [uploadMessage, setUploadMessage] = useState<string>('');
+
+  // NEW: RAG Ingestion & Document Target States
+  const [vaultFiles, setVaultFiles] = useState<string[]>([]);
+  const [ragMode, setRagMode] = useState<'global' | 'strict' | 'off'>('global');
+  const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const [incomingCitations, setIncomingCitations] = useState<Citation[]>([]);
 
   // FEATURE STATE: Initialize chat memory tracking right out of local storage
   const [chatHistory, setChatHistory] = useState<Message[]>(() => {
@@ -31,6 +46,14 @@ export default function App() {
     Prism.highlightAll();
   }, [chatHistory, streamData]);
 
+  // NEW: Fetch verified filenames in collection on mount
+  useEffect(() => {
+    fetch('http://127.0.0.1:8000/api/vault/files')
+      .then(res => res.json())
+      .then(data => { if (data.files) setVaultFiles(data.files); })
+      .catch(err => console.error("Vault fetching drop exception code stack:", err));
+  }, [uploadStatus]);
+
   const SYSTEM_PROMPT = "You are H.I.V.E., a hardened local AI orchestration assistant. Provide precise, professional, and accurate technical solutions.";
 
   const handleFormSubmit = async (e: React.FormEvent) => {
@@ -42,11 +65,29 @@ export default function App() {
     setChatHistory(updatedHistory);
     setUserInput('');
     clearStream();
+    setIncomingCitations([]);
 
-    const finalAssistantResponse = await executeStream(updatedHistory, { systemPrompt: SYSTEM_PROMPT });
+    // Execute stream passing along strategy options constraints matching schemas
+    const finalAssistantResponse = await executeStream(
+      updatedHistory, 
+      { 
+        systemPrompt: SYSTEM_PROMPT,
+        rag_mode: ragMode,
+        target_file: ragMode === 'strict' ? selectedFile : null,
+        temperature: 0.4,
+        model: 'llama3.1'
+      },
+      (citations) => {
+        setIncomingCitations(citations);
+      }
+    );
     
     if (finalAssistantResponse) {
-      setChatHistory((prev) => [...prev, { role: 'assistant', content: finalAssistantResponse }]);
+      setChatHistory((prev) => [...prev, { 
+        role: 'assistant', 
+        content: finalAssistantResponse,
+        citations: incomingCitations 
+      }]);
       clearStream();
     }
   };
@@ -73,14 +114,12 @@ export default function App() {
       if (response.ok) {
         setUploadStatus('SUCCESS');
         setUploadMessage(`Success: ${targetFile.name} fully vectorized.`);
-        // Reset message indicator back to standard idle layout after 4 seconds
         setTimeout(() => { setUploadStatus('READY'); setUploadMessage(''); }, 4000);
       } else {
         setUploadStatus('ERROR');
         setUploadMessage(`Error: ${data.detail || 'Upload pipeline failed.'}`);
       }
     } catch (err) {
-      // ✅ RESOLVED ESLint Warning: Used variable 'err' to log connection fault context telemetry
       console.error('H.I.V.E. UI Ingestion Gateway Exception Error Stack:', err);
       setUploadStatus('ERROR');
       setUploadMessage('Error: Connection to H.I.V.E. gateway dropped.');
@@ -92,14 +131,15 @@ export default function App() {
       setChatHistory([]);
       localStorage.removeItem('HIVE_SESSION_THREAD');
       clearStream();
+      setIncomingCitations([]);
     }
   };
 
   return (
-    <div style={{ display: 'flex', height: '100vh', width: '100vw', background: 'var(--bg-darker)', fontFamily: 'sans-serif', color: 'var(--text-main)' }}>
+    <div style={{ display: 'flex', height: '100vh', width: '100vw', background: 'var(--bg-darker)', fontFamily: 'sans-serif', color: 'var(--text-main)', overflow: 'hidden' }}>
       
       {/* SIDEBAR CONTAINER PANEL */}
-      <aside style={{ width: '280px', background: 'var(--bg-surface)', borderRight: '1px solid var(--border-glow)', padding: '20px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', boxSizing: 'border-box' }}>
+      <aside style={{ width: '320px', background: 'var(--bg-surface)', borderRight: '1px solid var(--border-glow)', padding: '20px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', boxSizing: 'border-box', overflowY: 'auto' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
             <div style={{ width: '12px', height: '12px', borderRadius: '50%', background: isStreaming ? 'var(--neon-cyan)' : 'var(--maroon-glow)', boxShadow: isStreaming ? '0 0 8px var(--neon-cyan)' : 'none' }}></div>
@@ -119,7 +159,7 @@ export default function App() {
             <label style={{ 
               display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', 
               padding: '15px 10px', background: 'var(--bg-darker)', border: '1px dashed var(--border-glow)', 
-              borderRadius: '6px', cursor: uploadStatus === 'INGESTING' ? 'not-allowed' : 'pointer', textAlign: 'center', transition: 'border-color 0.2s' 
+              borderRadius: '6px', cursor: uploadStatus === 'INGESTING' ? 'not-allowed' : 'pointer', textAlign: 'center', transition: 'border-color 0.2s', marginBottom: '10px'
             }}>
               <span style={{ fontSize: '0.8rem', color: uploadStatus === 'ERROR' ? '#fca5a5' : uploadStatus === 'SUCCESS' ? '#10b981' : 'var(--text-main)', fontWeight: 'bold' }}>
                 {uploadStatus === 'READY' && '📁 INGEST LOCAL DOCUMENT'}
@@ -128,16 +168,68 @@ export default function App() {
                 {uploadStatus === 'ERROR' && '❌ INGESTION COLLAPSE'}
               </span>
               <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginTop: '5px' }}>
-                {uploadMessage || 'Accepts target structures: PDF, TXT, MD'}
+                {uploadMessage || 'Accepts target structures: PDF, TXT, MD, DOCX'}
               </span>
               <input 
                 type="file" 
-                accept=".txt,.md,.pdf" 
+                accept=".txt,.md,.pdf,.docx" 
                 onChange={handleFileUpload} 
                 disabled={uploadStatus === 'INGESTING'} 
                 style={{ display: 'none' }} 
               />
             </label>
+
+            {/* NEW: REFACTOR MATRIX - ACTIVE VAULT FILE TRACKER DISPLAY CARD */}
+            <div style={{ fontSize: '0.7rem', textTransform: 'uppercase', color: 'var(--text-muted)', letterSpacing: '0.5px', marginBottom: '6px', marginTop: '14px' }}>Vectorized Vault Manifest</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', maxHeight: '120px', overflowY: 'auto', background: 'var(--bg-darker)', padding: '8px', borderRadius: '6px', border: '1px solid var(--border-glow)' }}>
+              {vaultFiles.length === 0 ? (
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontStyle: 'italic', textAlign: 'center', padding: '10px 0' }}>No localized matrices indexed.</div>
+              ) : (
+                vaultFiles.map(file => (
+                  <div 
+                    key={file}
+                    onClick={() => {
+                      setSelectedFile(file);
+                      setRagMode('strict');
+                    }}
+                    style={{
+                      padding: '6px 8px', fontSize: '0.75rem', borderRadius: '4px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', transition: 'all 0.15s',
+                      background: selectedFile === file && ragMode === 'strict' ? 'rgba(0, 242, 254, 0.1)' : 'transparent',
+                      border: selectedFile === file && ragMode === 'strict' ? '1px solid var(--neon-cyan)' : '1px solid transparent',
+                      color: selectedFile === file && ragMode === 'strict' ? 'var(--neon-cyan)' : 'var(--text-main)'
+                    }}
+                  >
+                    📄 {file.length > 28 ? `${file.substring(0, 25)}...` : file}
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+
+          {/* NEW: RAG STRATEGY ROUTING SWITCHERS */}
+          <div>
+            <div style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--text-muted)', letterSpacing: '1px', marginBottom: '10px' }}>RAG Search Strategy</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.8rem' }}>
+              <button 
+                onClick={() => setRagMode('global')}
+                style={{ width: '100%', padding: '8px 12px', textAlign: 'left', borderRadius: '50px', cursor: 'pointer', border: '1px solid var(--border-glow)', background: ragMode === 'global' ? 'var(--maroon-primary)' : 'var(--bg-darker)', color: 'var(--text-main)', fontWeight: ragMode === 'global' ? 'bold' : 'normal' }}
+              >
+                🌐 Global Knowledge Matrix (All Files)
+              </button>
+              <button 
+                onClick={() => { if(selectedFile) setRagMode('strict'); }}
+                disabled={!selectedFile}
+                style={{ width: '100%', padding: '8px 12px', textAlign: 'left', borderRadius: '50px', border: '1px solid var(--border-glow)', background: ragMode === 'strict' ? 'var(--neon-cyan)' : 'var(--bg-darker)', color: ragMode === 'strict' ? 'var(--bg-darker)' : 'var(--text-main)', fontWeight: ragMode === 'strict' ? 'bold' : 'normal', opacity: !selectedFile ? 0.3 : 1, cursor: !selectedFile ? 'not-allowed' : 'pointer' }}
+              >
+                🎯 Strict Isolated Target Mode
+              </button>
+              <button 
+                onClick={() => setRagMode('off')}
+                style={{ width: '100%', padding: '8px 12px', textAlign: 'left', borderRadius: '50px', cursor: 'pointer', border: '1px solid var(--border-glow)', background: ragMode === 'off' ? 'rgba(239, 68, 68, 0.2)' : 'var(--bg-darker)', color: ragMode === 'off' ? '#fca5a5' : 'var(--text-main)', fontWeight: ragMode === 'off' ? 'bold' : 'normal' }}
+              >
+                ❌ Bypass Injected Context Stores
+              </button>
+            </div>
           </div>
 
           {/* PURGE CONTROLS */}
@@ -150,7 +242,7 @@ export default function App() {
             WIPE CONSOLE THREAD
           </button>
 
-          {/* NEW: LIVE MIDDLEWARE INSTRUMETATION TELEMETRY WINDOW */}
+          {/* LIVE MIDDLEWARE INSTRUMENTATION TELEMETRY WINDOW */}
           <div style={{ display: 'flex', flexDirection: 'column' }}>
             <div style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--text-muted)', letterSpacing: '1px', marginBottom: '10px' }}>Live Telemetry</div>
             <div style={{ background: 'var(--bg-darker)', padding: '12px', borderRadius: '6px', border: '1px solid var(--border-glow)', fontSize: '0.8rem', display: 'flex', flexDirection: 'column', gap: '8px', minHeight: '100px', justifyContent: 'center' }}>
@@ -189,7 +281,7 @@ export default function App() {
         </div>
 
         {/* ACTIVE HARDWARE MONITOR DISPLAY */}
-        <div style={{ background: 'var(--bg-darker)', padding: '15px', borderRadius: '8px', border: '1px solid var(--border-glow)' }}>
+        <div style={{ background: 'var(--bg-darker)', padding: '15px', borderRadius: '8px', border: '1px solid var(--border-glow)', marginTop: '20px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', marginBottom: '5px' }}>
             <span style={{ color: 'var(--text-muted)' }}>GPU VRAM allocation</span>
             <span style={{ color: 'var(--maroon-glow)' }}>~6.5GB Cap</span>
@@ -228,18 +320,57 @@ export default function App() {
                 {msg.role === 'user' ? 'TRANSMISSION' : 'H.I.V.E CORE RESPONSE'}
               </div>
               <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+
+              {/* NEW: HISTORIC DATA DYNAMIC SOURCE CITATION CHIPS */}
+              {msg.citations && msg.citations.length > 0 && (
+                <div style={{ marginTop: '12px', paddingTop: '8px', borderTop: '1px dashed var(--border-glow)', display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                  {msg.citations.map((cite, cIdx) => (
+                    <span key={cIdx} style={{ fontSize: '0.65rem', background: 'var(--bg-darker)', border: '1px solid var(--border-glow)', color: 'var(--neon-cyan)', padding: '2px 8px', borderRadius: '4px' }}>
+                      📌 {cite.source} (Match: {Math.round(cite.score * 100)}%)
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
           ))}
 
-          {streamData && (
-            <div style={{ padding: '15px 20px', borderRadius: '8px', maxWidth: '85%', alignSelf: 'flex-start', background: 'var(--bg-surface)', border: '1px solid var(--neon-cyan)', fontSize: '0.95rem', lineHeight: '1.5' }}>
-              <div style={{ fontSize: '0.7rem', color: 'var(--neon-cyan)', marginBottom: '5px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                STREAMING LIVE CHUNKS...
-              </div>
-              <div>
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{streamData}</ReactMarkdown>
-                <span style={{ color: 'var(--neon-cyan)', fontWeight: 'bold' }}>_</span>
-              </div>
+          {/* STREAMING CHUNK METADATA WITH AGENT UPDATE GRAPH BAR */}
+          {isStreaming && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', alignSelf: 'flex-start', maxWidth: '85%' }}>
+              
+              {/* NEW: DYNAMIC LIVE CITATION CARD PREVIEWS */}
+              {incomingCitations.length > 0 && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                  {incomingCitations.map((cite, cIdx) => (
+                    <div key={cIdx} style={{ fontSize: '0.65rem', background: 'rgba(0, 242, 254, 0.05)', border: '1px solid rgba(0, 242, 254, 0.4)', color: 'var(--neon-cyan)', padding: '3px 8px', borderRadius: '4px', animation: 'pulse 2s infinite' }}>
+                      📌 Linked Matrix Source: {cite.source}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* NEW: ANIMATED AGENT TELEMETRY RUNTIME BANNER */}
+              {statusUpdate && (
+                <div style={{ padding: '8px 14px', background: 'var(--bg-darker)', border: '1px solid rgba(217, 119, 6, 0.5)', color: '#d97706', borderRadius: '6px', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{ display: 'inline-block', width: '6px', height: '6px', borderRadius: '50%', background: '#d97706', animation: 'ping 1.5s infinite' }}></span>
+                  <div>
+                    <span style={{ fontWeight: 'bold', display: 'block', fontSize: '0.6rem', textTransform: 'uppercase', opacity: 0.8 }}>// Agent Operation Step:</span>
+                    {statusUpdate}
+                  </div>
+                </div>
+              )}
+
+              {streamData && (
+                <div style={{ padding: '15px 20px', borderRadius: '8px', background: 'var(--bg-surface)', border: '1px solid var(--neon-cyan)', fontSize: '0.95rem', lineHeight: '1.5' }}>
+                  <div style={{ fontSize: '0.7', color: 'var(--neon-cyan)', marginBottom: '5px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                    STREAMING LIVE CHUNKS...
+                  </div>
+                  <div>
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{streamData}</ReactMarkdown>
+                    <span style={{ color: 'var(--neon-cyan)', fontWeight: 'bold' }}>_</span>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
