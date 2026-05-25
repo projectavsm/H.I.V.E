@@ -32,14 +32,18 @@ if not os.path.exists(VAULT_DIR):
 # =========================================================================
 # 1. ASYNCHRONOUS OLLAMA STREAM GENERATOR INTERFACE
 # =========================================================================
-async def stream_ollama_tokens(payload: dict):
+async def stream_ollama_tokens(payload: dict, telemetry: dict = None):
     """
     Asynchronous generator connecting directly to the local Ollama daemon socket.
     Consumes chunked JSON lines, extracts content tokens, and yields standard 
-    Server-Sent Events (SSE) data lines.
+    Server-Sent Events (SSE) data lines. Includes early transmission of system telemetry data.
     """
     # Defensive connection and payload generation timeouts
     timeout = httpx.Timeout(60.0, connect=5.0)
+    
+    # NEW: Emits telemetry dataset cleanly as the absolute first item down the wire
+    if telemetry:
+        yield f"data: {json.dumps({'telemetry': telemetry})}\n\n"
     
     async with httpx.AsyncClient(timeout=timeout) as client:
         try:
@@ -93,18 +97,32 @@ async def chat_completion_endpoint(request: Request, body: ChatCompletionRequest
     applying proactive server-side FIFO context sliding-window pruning,
     and executing simultaneous Local RAG Ingestion & Web Scraping loops.
     """
+    # Initialize reactive telemetry model array for real-time frontend instrumentation
+    telemetry_payload = {
+        "rag_matched": False,
+        "rag_blocks_found": 0,
+        "web_triggered": False,
+        "web_fragments_ingested": 0,
+        "total_payload_chars": 0,
+        "history_pruned": False,
+        "pruned_count": 0
+    }
+
     # -------------------------------------------------------------------------
     # DEFENSE LAYER 1: MIDDLEWARE-LEVEL SLIDING CONTEXT WINDOW (FIFO PRUNING)
     # -------------------------------------------------------------------------
     MAX_HISTORIC_MESSAGES = 10
+    raw_message_count = len(body.messages)
     messages_payload = [msg.model_dump() for msg in body.messages]
     
-    if len(messages_payload) > MAX_HISTORIC_MESSAGES:
+    if raw_message_count > MAX_HISTORIC_MESSAGES:
         logger.warning(
-            f"⚠️ Context bloat caught ({len(messages_payload)} messages). "
+            f"⚠️ Context bloat caught ({raw_message_count} messages). "
             f"Pruning oldest records to match strict FIFO VRAM safety bounds."
         )
         messages_payload = messages_payload[-MAX_HISTORIC_MESSAGES:]
+        telemetry_payload["history_pruned"] = True
+        telemetry_payload["pruned_count"] = raw_message_count - MAX_HISTORIC_MESSAGES
 
     # Extract the raw statement of the active user query turn
     last_user_message = messages_payload[-1]["content"] if messages_payload else ""
@@ -124,6 +142,9 @@ async def chat_completion_endpoint(request: Request, body: ChatCompletionRequest
         if raw_rag_data and len(str(raw_rag_data).strip()) > 0:
             rag_context = f"\n[VERIFIED LOCAL RAG FILE CONTEXT]:\n{raw_rag_data}\n"
             logger.info("📂 RAG Match: Local semantic context successfully extracted from vector database memory store.")
+            telemetry_payload["rag_matched"] = True
+            # Log occurrence as 1 dense compiled context metadata chunk block
+            telemetry_payload["rag_blocks_found"] = 1
         else:
             logger.warning("⚠️ RAG Warning: Vector search executed successfully but found 0 matching text blocks inside storage_vault.")
     except Exception as e:
@@ -133,11 +154,14 @@ async def chat_completion_endpoint(request: Request, body: ChatCompletionRequest
     web_context = ""
     trigger_words = ["web", "live", "current", "search", "latest", "google"]
     if any(word in last_user_message.lower() for word in trigger_words):
+        telemetry_payload["web_triggered"] = True
         try:
             logger.info(f"🌐 Scraper Match: Target trigger detected. Dispatching DuckDuckGo scraper loop...")
             raw_web_data = await AutonomousWebScraper.fetch_live_web_context(last_user_message)
             if raw_web_data:
                 web_context = f"\n[LIVE WEB SEARCH CONTEXT]:\n{raw_web_data}\n"
+                # The engine scraper returns the top 3 extracted snippet rows on success
+                telemetry_payload["web_fragments_ingested"] = 3
         except Exception as e:
             logger.error(f"❌ Web Scraper execution internal fault: {str(e)}")
 
@@ -178,13 +202,15 @@ async def chat_completion_endpoint(request: Request, body: ChatCompletionRequest
         "content": augmented_system_instructions
     })
     
-    logger.info(f"💾 System context array compiled successfully. Total injected payload length: {len(augmented_system_instructions)} chars.")
+    # Compute complete layout scale metric
+    telemetry_payload["total_payload_chars"] = len(augmented_system_instructions)
+    logger.info(f"💾 System context array compiled successfully. Total injected payload length: {telemetry_payload['total_payload_chars']} chars.")
 
     # -------------------------------------------------------------------------
     # RESPONSE GENERATION OUTPUT STREAM TRANSFERS
     # -------------------------------------------------------------------------
     return StreamingResponse(
-        stream_ollama_tokens(ollama_payload),
+        stream_ollama_tokens(ollama_payload, telemetry=telemetry_payload),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

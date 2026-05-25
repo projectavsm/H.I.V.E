@@ -4,13 +4,15 @@ import numpy as np
 import httpx
 from pypdf import PdfReader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from app.config import settings  # Import the configuration singleton
 
 try:
     from docx import Document as DocxReader
 except ImportError:
     DocxReader = None
 
-OLLAMA_URL = "http://localhost:11434/api/embeddings"
+# RESOLVED: Pointing to explicit IPv4 literal via settings to prevent Windows 11 loopback resolution drops
+OLLAMA_URL = f"{settings.OLLAMA_BASE_URL}/api/embeddings"
 EMBED_MODEL = "all-minilm"  # Ensure you ran `ollama pull all-minilm`
 VECTOR_STORE_PATH = os.path.join(os.getcwd(), "vector_store", "knowledge_base.json")
 

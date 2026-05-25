@@ -10,7 +10,9 @@ class HiveSettings(BaseSettings):
     APP_NAME: str = Field(default="H.I.V.E. Core Engine")
     DEBUG: bool = Field(default=False)
     
-    OLLAMA_BASE_URL: str = Field(default="http://localhost:11434")
+    # RESOLVED: Swapped 'localhost' out for explicit IPv4 loopback '127.0.0.1' 
+    # This prevents Windows name-resolution stalls and fixes the runtime connection collapse.
+    OLLAMA_BASE_URL: str = Field(default="http://127.0.0.1:11434")
     OLLAMA_MODEL: str = Field(default="llama3.1")
     
     BASE_DIR: str = Field(default=os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

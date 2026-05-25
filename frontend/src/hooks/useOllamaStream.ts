@@ -10,16 +10,31 @@ interface StreamOptions {
   systemPrompt?: string;
 }
 
+// Define explicit model structure for internal telemetry updates
+export interface TelemetryMetrics {
+  rag_matched: boolean;
+  rag_blocks_found: number;
+  web_triggered: boolean;
+  web_fragments_ingested: number;
+  total_payload_chars: number;
+  history_pruned: boolean;
+  pruned_count: number;
+}
+
 export const useOllamaStream = (backendUrl: string = 'http://127.0.0.1:8000/api/chat/stream') => {
   const [streamData, setStreamData] = useState<string>('');
   const [isStreaming, setIsStreaming] = useState<boolean>(false);
   const [streamError, setStreamError] = useState<string | null>(null);
+  // NEW: Added state manager to capture middleware instrumentation metrics
+  const [telemetryData, setTelemetryData] = useState<TelemetryMetrics | null>(null);
 
   // Return a promise resolving to the fully accumulated assistant string or null on failure
   const executeStream = useCallback(async (messages: Message[], options?: StreamOptions): Promise<string | null> => {
     setIsStreaming(true);
     setStreamError(null);
     setStreamData('');
+    // Clear out telemetry state on initialization of a fresh turn payload
+    setTelemetryData(null);
     
     // In-memory tracker to collect all text tokens synchronously outside of the React render loop cycle
     let fullyAccumulatedText = '';
@@ -75,6 +90,12 @@ export const useOllamaStream = (backendUrl: string = 'http://127.0.0.1:8000/api/
               continue;
             }
 
+            // NEW: Intercept isolated telemetry packets before processing tokens
+            if (parsedChunk.telemetry) {
+              setTelemetryData(parsedChunk.telemetry);
+              continue; // Intercepted cleanly, bypass token compiler paths
+            }
+
             if (parsedChunk.token) {
               // Concurrently append to our local variable string context AND the reactive UI state frame
               fullyAccumulatedText += parsedChunk.token;
@@ -112,7 +133,11 @@ export const useOllamaStream = (backendUrl: string = 'http://127.0.0.1:8000/api/
     streamData,
     isStreaming,
     streamError,
+    telemetryData, // NEW: Exposed down to App.tsx / layout nodes
     executeStream,
-    clearStream: () => setStreamData('')
+    clearStream: () => {
+      setStreamData('');
+      setTelemetryData(null);
+    }
   };
 };

@@ -11,7 +11,8 @@ import { useOllamaStream } from './hooks/useOllamaStream';
 import type { Message } from './hooks/useOllamaStream';
 
 export default function App() {
-  const { streamData, isStreaming, streamError, executeStream, clearStream } = useOllamaStream();
+  // NEW: Extracted telemetryData safely from our modernized custom stream hook
+  const { streamData, isStreaming, streamError, telemetryData, executeStream, clearStream } = useOllamaStream();
   const [userInput, setUserInput] = useState<string>('');
   
   // UI Ingestion Status States
@@ -148,6 +149,43 @@ export default function App() {
           >
             WIPE CONSOLE THREAD
           </button>
+
+          {/* NEW: LIVE MIDDLEWARE INSTRUMETATION TELEMETRY WINDOW */}
+          <div style={{ display: 'flex', flexDirection: 'column' }}>
+            <div style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--text-muted)', letterSpacing: '1px', marginBottom: '10px' }}>Live Telemetry</div>
+            <div style={{ background: 'var(--bg-darker)', padding: '12px', borderRadius: '6px', border: '1px solid var(--border-glow)', fontSize: '0.8rem', display: 'flex', flexDirection: 'column', gap: '8px', minHeight: '100px', justifyContent: 'center' }}>
+              {!telemetryData ? (
+                <div style={{ color: 'var(--text-muted)', textAlign: 'center', fontStyle: 'italic', fontSize: '0.75rem' }}>
+                  {isStreaming ? 'Intercepting transaction logs...' : 'Awaiting prompt pipeline dispatch...'}
+                </div>
+              ) : (
+                <>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ color: 'var(--text-muted)' }}>Semantic RAG:</span>
+                    <span style={{ color: telemetryData.rag_matched ? '#10b981' : 'var(--text-muted)', fontWeight: 'bold' }}>
+                      {telemetryData.rag_matched ? `🟢 HIT (${telemetryData.rag_blocks_found} Blk)` : '⚪ BYPASS'}
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ color: 'var(--text-muted)' }}>Web Scraper:</span>
+                    <span style={{ color: telemetryData.web_triggered ? 'var(--neon-cyan)' : 'var(--text-muted)', fontWeight: 'bold' }}>
+                      {telemetryData.web_triggered ? `🌐 ACTIVE (${telemetryData.web_fragments_ingested} Frag)` : '⚪ IDLE'}
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ color: 'var(--text-muted)' }}>FIFO Pruning:</span>
+                    <span style={{ color: telemetryData.history_pruned ? '#ef4444' : 'var(--text-muted)', fontWeight: 'bold' }}>
+                      {telemetryData.history_pruned ? `⚠️ CLIPPED (-${telemetryData.pruned_count})` : '🟢 STABLE'}
+                    </span>
+                  </div>
+                  <div style={{ borderTop: '1px dashed #334155', marginTop: '4px', paddingTop: '6px', display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem' }}>
+                    <span style={{ color: 'var(--text-muted)' }}>Injected Payload:</span>
+                    <span style={{ color: 'var(--neon-purple)', fontWeight: 'bold' }}>{telemetryData.total_payload_chars.toLocaleString()} Chars</span>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
         </div>
 
         {/* ACTIVE HARDWARE MONITOR DISPLAY */}
