@@ -1,5 +1,7 @@
 import os
+import io
 import chromadb
+import httpx
 from pypdf import PdfReader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from app.config import settings  # Import the configuration singleton
@@ -34,38 +36,48 @@ class LocalRAGEngine:
         self.embed_model = EMBED_MODEL
 
     async def _get_single_embedding(self, text: str) -> list:
-        import httpx
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(self.embeddings_url, json={"model": self.embed_model, "prompt": text})
             if response.status_code == 200:
                 return response.json()["embedding"]
             raise Exception(f"Ollama embedding failure: {response.status_code}")
 
-    def extract_text(self, file_path: str) -> str:
-        ext = os.path.splitext(file_path)[1].lower()
+    def extract_text(self, file_bytes: bytes, filename: str) -> str:
+        """Extracts text safely from PDF, DOCX, and TXT frames directly from memory payload streams."""
+        ext = os.path.splitext(filename.lower())[1]
         
         if ext in (".txt", ".md"):
-            with open(file_path, "r", encoding="utf-8") as f:
-                return f.read()
+            return file_bytes.decode("utf-8", errors="ignore")
                 
         elif ext == ".pdf":
-            reader = PdfReader(file_path)
+            pdf_file = io.BytesIO(file_bytes)
+            reader = PdfReader(pdf_file)
             return "".join([page.extract_text() or "" for page in reader.pages])
             
         elif ext == ".docx":
             if DocxReader is None:
                 raise ImportError("Target package 'python-docx' missing. Run `pip install python-docx` to handle Word files.")
-            doc = DocxReader(file_path)
+            docx_file = io.BytesIO(file_bytes)
+            doc = DocxReader(docx_file)
             return "\n".join([p.text for p in doc.paragraphs])
             
         raise ValueError(f"Unsupported storage format layout: {ext}")
 
-    async def ingest_document(self, file_path: str):
-        file_name = os.path.basename(file_path)
-        print(f"[CHROMA] Compiling vector matrices for: {file_path}")
+    async def ingest_document(self, file_bytes: bytes, filename: str, telemetry_callback=None):
+        """Processes binary file streams into chunked matrices and commits them to ChromaDB with telemetry tracking."""
+        print(f"[CHROMA] Compiling vector matrices for: {filename}")
+        if telemetry_callback:
+            telemetry_callback(f"INBOUND TRANSMISSION DETECTED: Parsing data stream '{filename}'")
         
-        raw_text = self.extract_text(file_path)
+        raw_text = self.extract_text(file_bytes, filename)
+        if telemetry_callback:
+            telemetry_callback(f"EXTRACTOR STATUS: SUCCESS. Character length parsed: {len(raw_text)}")
+
         chunks = self.splitter.split_text(raw_text)
+        total_chunks = len(chunks)
+        
+        if telemetry_callback:
+            telemetry_callback(f"Matrix chunking initialized. Total components mapped: {total_chunks}")
         
         documents = []
         metadatas = []
@@ -79,16 +91,19 @@ class LocalRAGEngine:
                 continue
             
             documents.append(cleaned_chunk)
-            metadatas.append({"source": file_name})
-            ids.append(f"{file_name}_{idx}")
+            metadatas.append({"source": filename, "chunk_index": idx})
+            ids.append(f"{filename}_{idx}")
             idx += 1
 
         if documents:
-            # Generate embeddings asynchronously in batches
+            # Generate embeddings asynchronously in batches via local Ollama endpoint
             embeddings = []
-            for doc in documents:
+            for i, doc in enumerate(documents):
                 emb = await self._get_single_embedding(doc)
                 embeddings.append(emb)
+                
+                if telemetry_callback and (i + 1) % max(1, len(documents) // 4) == 0:
+                    telemetry_callback(f"Indexing progress: {int(((i + 1) / len(documents)) * 100)}% absolute execution.")
 
             # Insert natively into persistent ChromaDB
             self.collection.add(
@@ -97,7 +112,12 @@ class LocalRAGEngine:
                 metadatas=metadatas,
                 ids=ids
             )
-        print(f"[CHROMA] Ingestion matrix sequence finalized. Registered {len(documents)} valid structural fragments for {file_name}")
+            
+        if telemetry_callback:
+            telemetry_callback(f"TRANSMISSION COMPLETE: File successfully locked into database collection.")
+            
+        print(f"[CHROMA] Ingestion matrix sequence finalized. Registered {len(documents)} fragments for {filename}")
+        return {"filename": filename, "status": "indexed", "chunks": len(documents)}
 
     def get_all_ingested_files(self) -> list:
         """Helper to return list of unique files inside the Document Vault"""

@@ -26,3 +26,8 @@ desktop.ini
 frontend/node_modules/
 frontend/dist/
 .env.local
+
+# Ignore local SQLite vector databases
+*.sqlite3
+backend/vector_store/
+chroma_db/

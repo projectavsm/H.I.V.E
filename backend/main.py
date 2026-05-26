@@ -1,14 +1,21 @@
+import os
+import json
 import logging
+import asyncio
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request
+import httpx
+
+from fastapi import FastAPI, Request, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, StreamingResponse
+
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
-from fastapi.responses import JSONResponse
 
 from app.config import settings
 from app.api import router as api_router
+from app.services.rag_service import LocalRAGEngine  # Hook into updated memory engine class
 
 # =========================================================================
 # 1. INITIALIZE STRUCTURED LOGGING
@@ -23,6 +30,12 @@ logger = logging.getLogger("H.I.V.E.Gateway")
 # 2. CONFIGURE RATE LIMITER ENGINE
 # =========================================================================
 limiter = Limiter(key_func=get_remote_address)
+
+# Global memory queue map tracking file streaming status updates for live telemetry feed hooks
+telemetry_logs = []
+
+# Instantiate the local RAG engine singleton wrapper
+rag_engine = LocalRAGEngine()
 
 # =========================================================================
 # 3. LIFECYCLE MANAGEMENT (LIFESPAN)
@@ -68,7 +81,7 @@ async def custom_rate_limit_handler(request: Request, exc: RateLimitExceeded):
 # =========================================================================
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "*"], # Maintained origins alongside wildcard stream fallback
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -81,7 +94,88 @@ app.add_middleware(
 app.include_router(api_router, prefix="/api")
 
 # =========================================================================
-# 8. CORE ROOT LIVENESS ENDPOINT
+# 8. NEW CORE ENGINE RAG & STREAMING PIPELINE ROUTINGS
+# =========================================================================
+
+@app.get("/api/telemetry")
+async def get_telemetry():
+    """Flushes active state updates straight to UI visualization blocks."""
+    global telemetry_logs
+    current_snapshots = list(telemetry_logs)
+    telemetry_logs.clear()
+    return {"events": current_snapshots}
+
+@app.post("/api/upload")
+async def upload_document(file: UploadFile = File(...)):
+    """Receives binary document frames, runs processing pipelines, saves data structures."""
+    global telemetry_logs
+    try:
+        file_bytes = await file.read()
+        
+        # Phase 1 & 2 Execution: Pipe directly into the preserved class layer via memory hooks
+        def log_to_telemetry(msg): 
+            telemetry_logs.append(msg)
+            logger.info(f"[TELEMETRY] {msg}")
+
+        result = await rag_engine.ingest_document(
+            file_bytes=file_bytes, 
+            filename=file.filename, 
+            telemetry_callback=log_to_telemetry
+        )
+        return result
+        
+    except Exception as e:
+        error_msg = f"CRITICAL COMPILATION FAULT: Processing aborted. Error: {str(e)}"
+        telemetry_logs.append(error_msg)
+        logger.error(error_msg)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/chat/stream")
+async def stream_chat_response(payload: dict):
+    """Fuses database semantic context strings with model generations using local SSE frames."""
+    user_prompt = payload.get("message", "")
+    target_file = payload.get("target_file", None) # Maintains structural Vault filters
+    
+    # Extract historical vector contexts natively using your preserved threshold scoring logic
+    contexts = await rag_engine.query_knowledge_base(user_prompt, top_k=2, target_file=target_file)
+    
+    system_prompt = "You are H.I.V.E Core, an advanced, highly strategic localized AI intelligence construct."
+    if contexts:
+        context_str = "\n\n".join([c["text"] for c in contexts])
+        system_prompt += f"\nInject the following localized structural system database context profiles into your final response logic:\n{context_str}"
+
+    async def ollama_generator():
+        # Build URL dynamically via config singleton to protect Windows loopbacks
+        ollama_url = f"{settings.OLLAMA_BASE_URL}/api/generate"
+        ollama_payload = {
+            "model": settings.OLLAMA_MODEL,
+            "prompt": f"{system_prompt}\n\nUser: {user_prompt}\nResponse:",
+            "stream": True
+        }
+        
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            async with client.stream("POST", ollama_url, json=ollama_payload) as response:
+                if response.status_code != 200:
+                    yield f"data: {json.dumps({'error': 'Ollama connection failed'})}\n\n"
+                    return
+                
+                async_lines = response.aiter_lines()
+                async for line in async_lines:
+                    if line:
+                        parsed_line = json.loads(line)
+                        token = parsed_line.get("response", "")
+                        done = parsed_line.get("done", False)
+                        
+                        # Pack individual string components inside Server-Sent Event envelopes
+                        yield f"data: {json.dumps({'token': token, 'done': done})}\n\n"
+                        
+                        if done:
+                            break
+
+    return StreamingResponse(ollama_generator(), media_type="text/event-stream")
+
+# =========================================================================
+# 9. CORE ROOT LIVENESS ENDPOINT
 # =========================================================================
 @app.get("/api/health")
 @limiter.limit("5/minute")

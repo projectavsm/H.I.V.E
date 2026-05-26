@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import Prism from 'prismjs';
@@ -14,6 +14,7 @@ export default function App() {
   const [isMobile, setIsMobile] = useState<boolean>(window.innerWidth < 1024);
   const [menuOpen, setMenuOpen] = useState<boolean>(false);
 
+  // Viewport observer loop
   useEffect(() => {
     const handleResize = () => {
       const mobileView = window.innerWidth < 1024;
@@ -41,17 +42,25 @@ export default function App() {
   const [ragMode, setRagMode] = useState<'global' | 'strict' | 'off'>('global');
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [incomingCitations, setIncomingCitations] = useState<Citation[]>([]);
+  
+  // Telemetry state buffer for direct backend streaming tracking
+  const [telemetry, setTelemetry] = useState<string[]>(['Awaiting prompt pipeline dispatch...']);
+  
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const terminalEndRef = useRef<HTMLDivElement>(null);
 
   const [chatHistory, setChatHistory] = useState<Message[]>(() => {
     const cachedMemory = localStorage.getItem('HIVE_SESSION_THREAD');
     return cachedMemory ? JSON.parse(cachedMemory) : [];
   });
   
+  // Persistence and syntax highlighters 
   useEffect(() => {
     localStorage.setItem('HIVE_SESSION_THREAD', JSON.stringify(chatHistory));
     Prism.highlightAll();
   }, [chatHistory, streamData]);
 
+  // Fetch unique vectorized vault manifest structures
   useEffect(() => {
     fetch('http://127.0.0.1:8000/api/vault/files')
       .then(res => res.json())
@@ -59,8 +68,30 @@ export default function App() {
       .catch(err => console.error("Vault error:", err));
   }, [uploadStatus]);
 
+  // FIXED LINE 80: Removed unused 'err' variable completely
+  useEffect(() => {
+    const pollInterval = setInterval(async () => {
+      try {
+        const res = await fetch('http://127.0.0.1:8000/api/telemetry');
+        const data = await res.json();
+        if (data.events && data.events.length > 0) {
+          setTelemetry((prev) => [...prev, ...data.events]);
+        }
+      } catch {
+        // Quietly absorb temporary connection gaps during service deployment cycles
+      }
+    }, 1200);
+    return () => clearInterval(pollInterval);
+  }, []);
+
+  // Force auto-scroll adjustments inside the telemetry panel
+  useEffect(() => {
+    terminalEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [telemetry]);
+
   const SYSTEM_PROMPT = "You are H.I.V.E., a hardened local AI orchestration assistant.";
 
+  // Dispatch payloads and compile real-time event streaming token values
   const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!userInput.trim() || isStreaming) return;
@@ -84,12 +115,14 @@ export default function App() {
     }
   };
 
+  // Handle document binary file picking stream structures
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const targetFile = e.target.files?.[0];
     if (!targetFile) return;
 
     setUploadStatus('INGESTING');
     setUploadMessage(`Compiling vector grid for: ${targetFile.name}...`);
+    setTelemetry((prev) => [...prev, `INITIALIZING DIRECT UPLOAD FOR: ${targetFile.name}`]);
 
     const formData = new FormData();
     formData.append('file', targetFile);
@@ -105,15 +138,22 @@ export default function App() {
       if (response.ok) {
         setUploadStatus('SUCCESS');
         setUploadMessage(`Success: ${targetFile.name} fully vectorized.`);
+        setTelemetry((prev) => [...prev, `SUCCESS: System mapped ${data.chunks || 0} independent document chunks.`]);
         setTimeout(() => { setUploadStatus('READY'); setUploadMessage(''); }, 4000);
       } else {
         setUploadStatus('ERROR');
         setUploadMessage(`Error: ${data.detail || 'Upload pipeline failed.'}`);
+        setTelemetry((prev) => [...prev, `ERROR: Ingestion phase failure. ${data.detail || 'Upload failed.'}`]);
       }
-    } catch (err) {
+    // FIXED LINE 148: Typed 'err' as 'unknown' and checked instance to eliminate explicit 'any' rule trip
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : 'Unknown exception occurred.';
       console.error('H.I.V.E. UI Ingestion Exception:', err);
       setUploadStatus('ERROR');
       setUploadMessage('Error: Connection to H.I.V.E. gateway dropped.');
+      setTelemetry((prev) => [...prev, `ERROR: Ingestion connection drop. ${errorMessage}`]);
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
 
@@ -123,6 +163,7 @@ export default function App() {
       localStorage.removeItem('HIVE_SESSION_THREAD');
       clearStream();
       setIncomingCitations([]);
+      setTelemetry(['Awaiting prompt pipeline dispatch...']);
     }
   };
 
@@ -170,7 +211,7 @@ export default function App() {
               <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginTop: '5px' }}>
                 {uploadMessage || 'Accepts target structures: PDF, TXT, MD, DOCX'}
               </span>
-              <input type="file" accept=".txt,.md,.pdf,.docx" onChange={handleFileUpload} disabled={uploadStatus === 'INGESTING'} style={{ display: 'none' }} />
+              <input type="file" ref={fileInputRef} accept=".txt,.md,.pdf,.docx" onChange={handleFileUpload} disabled={uploadStatus === 'INGESTING'} style={{ display: 'none' }} />
             </label>
 
             <div style={{ fontSize: '0.7rem', textTransform: 'uppercase', color: 'var(--text-muted)', letterSpacing: '0.5px', marginBottom: '6px', marginTop: '14px' }}>Vectorized Vault Manifest</div>
@@ -216,30 +257,20 @@ export default function App() {
             WIPE CONSOLE THREAD
           </button>
 
-          {/* TELEMETRY */}
-          <div style={{ display: 'flex', flexDirection: 'column' }}>
+          {/* UNIFIED STREAM TELEMETRY HUD */}
+          <div style={{ display: 'flex', flexDirection: 'column', flexGrow: 1 }}>
             <div style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--text-muted)', letterSpacing: '1px', marginBottom: '10px' }}>Live Telemetry</div>
-            <div style={{ background: 'var(--bg-darker)', padding: '12px', borderRadius: '6px', border: '1px solid var(--border-glow)', fontSize: '0.8rem', display: 'flex', flexDirection: 'column', gap: '8px', minHeight: '100px', justifyContent: 'center' }}>
-              {!telemetryData ? (
-                <div style={{ color: 'var(--text-muted)', textAlign: 'center', fontStyle: 'italic', fontSize: '0.75rem' }}>
-                  {isStreaming ? 'Intercepting logs...' : 'Awaiting dispatch...'}
+            <div style={{ flexGrow: 1, background: 'var(--bg-darker)', border: '1px solid var(--border-glow)', borderRadius: '6px', padding: '12px', overflowY: 'auto', maxHeight: '180px', fontSize: '11px', color: '#38bdf8', fontFamily: 'monospace' }}>
+              {telemetry.map((log, i) => (
+                <div key={i} style={{ marginBottom: '6px', borderBottom: '1px solid rgba(255,255,255,0.02)', paddingBottom: '4px' }}>📡 {log}</div>
+              ))}
+              {telemetryData && (
+                <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px dashed #334155', color: '#10b981' }}>
+                  <div>RAG Hit: {telemetryData.rag_matched ? `TRUE (${telemetryData.rag_blocks_found} Blocks)` : 'FALSE'}</div>
+                  <div>Pruning Mode: {telemetryData.history_pruned ? `ACTIVE (-${telemetryData.pruned_count})` : 'STABLE'}</div>
                 </div>
-              ) : (
-                <>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span style={{ color: 'var(--text-muted)' }}>Semantic RAG:</span>
-                    <span style={{ color: telemetryData.rag_matched ? '#10b981' : 'var(--text-muted)', fontWeight: 'bold' }}>{telemetryData.rag_matched ? `🟢 HIT (${telemetryData.rag_blocks_found} Blk)` : '⚪ BYPASS'}</span>
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span style={{ color: 'var(--text-muted)' }}>Web Scraper:</span>
-                    <span style={{ color: telemetryData.web_triggered ? 'var(--neon-cyan)' : 'var(--text-muted)', fontWeight: 'bold' }}>{telemetryData.web_triggered ? `🌐 ACTIVE (${telemetryData.web_fragments_ingested} Frag)` : '⚪ IDLE'}</span>
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span style={{ color: 'var(--text-muted)' }}>FIFO Pruning:</span>
-                    <span style={{ color: telemetryData.history_pruned ? '#ef4444' : 'var(--text-muted)', fontWeight: 'bold' }}>{telemetryData.history_pruned ? `⚠️ CLIPPED (-${telemetryData.pruned_count})` : '🟢 STABLE'}</span>
-                  </div>
-                </>
               )}
+              <div ref={terminalEndRef} />
             </div>
           </div>
         </div>
@@ -273,7 +304,7 @@ export default function App() {
         <section style={{ 
           flex: 1, 
           padding: isMobile ? '15px' : '30px', 
-          overflowY: 'auto',        // This remains the only vertical scroller across the interface
+          overflowY: 'auto',
           display: 'flex', 
           flexDirection: 'column', 
           gap: '24px' 
@@ -305,7 +336,6 @@ export default function App() {
                 {msg.role === 'user' ? '📡 TRANSMISSION' : '🤖 H.I.V.E CORE RESPONSE'}
               </div>
               
-              {/* Markdown contents container allows blocks to grow naturally without inner scrolling boxes */}
               <div className="markdown-content">
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
               </div>
@@ -359,7 +389,7 @@ export default function App() {
           )}
         </section>
 
-        {/* INPUT TRANSMISSION FOOTE BLOCK */}
+        {/* INPUT TRANSMISSION FOOTER BLOCK */}
         <footer style={{ padding: isMobile ? '15px' : '20px 30px', background: 'var(--bg-surface)', borderTop: '1px solid var(--border-glow)' }}>
           <form onSubmit={handleFormSubmit} style={{ display: 'flex', gap: '15px' }}>
             <input
