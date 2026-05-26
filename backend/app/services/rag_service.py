@@ -12,7 +12,7 @@ except ImportError:
 # RESOLVED: Pointing to explicit IPv4 literal via settings to prevent Windows 11 loopback resolution drops
 OLLAMA_URL = f"{settings.OLLAMA_BASE_URL}/api/embeddings"
 EMBED_MODEL = "all-minilm"  # Ensure you ran `ollama pull all-minilm`
-
+     
 class LocalRAGEngine:
     def __init__(self, chunk_size=500, chunk_overlap=50):
         self.splitter = RecursiveCharacterTextSplitter(

@@ -182,3 +182,35 @@
     border-right-color: var(--border);
   }
 }
+
+/* ==========================================================================
+   H.I.V.E. CORE MARKDOWN AND CODE BLOCK CONTAINER INJECTIONS
+   Removes independent inner vertical scrolling mechanics from messages
+   ========================================================================== */
+
+.markdown-content pre {
+  background-color: #0d1117 !important; /* Deep code workspace backdrop background matches */
+  border: 1px solid var(--border-glow);
+  border-radius: 8px;
+  padding: 16px;
+  margin: 14px 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  
+  /* Core layout mechanics architecture overrides */
+  overflow-y: hidden !important; /* Forces total full-height breakout (No inner vertical sliders) */
+  overflow-x: auto !important;   /* Graceful fallback axis for code snippets stretching long horizons */
+  height: auto !important;       /* Lets the code container grow vertically to match its code lines */
+}
+
+.markdown-content code {
+  font-family: 'Fira Code', Consolas, Monaco, 'Andale Mono', 'Ubuntu Mono', monospace !important;
+  font-size: 0.9rem;
+  white-space: pre;              /* Preserves structural formatting beautifully */
+  word-break: normal;
+}
+
+.markdown-content p {
+  margin-top: 0;
+  margin-bottom: 12px;
+}
