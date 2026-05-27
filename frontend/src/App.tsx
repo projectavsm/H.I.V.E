@@ -48,6 +48,9 @@ export default function App() {
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const terminalEndRef = useRef<HTMLDivElement>(null);
+  
+  // UX MODIFICATION: Dynamic anchor reference variable targeting the chat window matrix floor
+  const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const [chatHistory, setChatHistory] = useState<Message[]>(() => {
     const cachedMemory = localStorage.getItem('HIVE_SESSION_THREAD');
@@ -59,6 +62,11 @@ export default function App() {
     localStorage.setItem('HIVE_SESSION_THREAD', JSON.stringify(chatHistory));
     Prism.highlightAll();
   }, [chatHistory, streamData]);
+
+  // UX MODIFICATION: Auto-Scroll window layout manager logic sequence tracking token streams
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [chatHistory, streamData, isStreaming]);
 
   // Fetch unique vectorized vault manifest structures
   useEffect(() => {
@@ -387,6 +395,9 @@ export default function App() {
               <strong>System Halt Exception:</strong> {streamError}
             </div>
           )}
+
+          {/* UX MODIFICATION: Pin alignment node ensuring prompt container anchors remain visible */}
+          <div ref={messagesEndRef} />
         </section>
 
         {/* INPUT TRANSMISSION FOOTER BLOCK */}

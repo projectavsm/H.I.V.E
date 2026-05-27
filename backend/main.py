@@ -106,29 +106,34 @@ async def get_telemetry():
     return {"events": current_snapshots}
 
 @app.post("/api/upload")
-async def upload_document(file: UploadFile = File(...)):
-    """Receives binary document frames, runs processing pipelines, saves data structures."""
-    global telemetry_logs
+async def upload_document_endpoint(file: UploadFile = File(...)):
+    """
+    Receives binary document frames natively, updates logging array layers, 
+    and awaits the asynchronous RAG engine ingestion safely.
+    """
     try:
+        # 1. Read binary blocks straight from memory payload
         file_bytes = await file.read()
         
-        # Phase 1 & 2 Execution: Pipe directly into the preserved class layer via memory hooks
-        def log_to_telemetry(msg): 
-            telemetry_logs.append(msg)
+        # 2. Local telemetry logging callback helper
+        def log_to_telemetry(msg: str):
+            # If you maintain a global telemetry array in main.py, append it here
+            # e.g., telemetry_logs.append(msg)
             logger.info(f"[TELEMETRY] {msg}")
 
+        # 3. CRITICAL: Both the endpoint must be 'async def' and this line must use 'await'
         result = await rag_engine.ingest_document(
             file_bytes=file_bytes, 
             filename=file.filename, 
             telemetry_callback=log_to_telemetry
         )
-        return result
         
+        # 4. Explicitly return the raw dictionary result to the serialization array
+        return result
+
     except Exception as e:
-        error_msg = f"CRITICAL COMPILATION FAULT: Processing aborted. Error: {str(e)}"
-        telemetry_logs.append(error_msg)
-        logger.error(error_msg)
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"❌ Real-time UI ingestion failure inside main gateway: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Internal database ingestion compilation error: {str(e)}")
 
 @app.post("/api/chat/stream")
 async def stream_chat_response(payload: dict):

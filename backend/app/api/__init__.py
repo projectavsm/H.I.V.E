@@ -235,41 +235,41 @@ async def chat_completion_endpoint(body: ChatCompletionRequest):
 # =========================================================================
 # 3. REAL-TIME UI KNOWLEDGE INGESTION PIPELINE (FILE UPLOADER)
 # =========================================================================
-@router.post("/upload")
-async def upload_document_endpoint(file: UploadFile = File(...)):
-    """
-    Secure file upload interceptor receiving binary file data frames via the UI,
-    writing them safely to storage_vault, and executing real-time vector indexing.
-    """
-    valid_extensions = (".txt", ".md", ".pdf", ".docx")
-    ext = os.path.splitext(file.filename)[1].lower()
-    
-    if ext not in valid_extensions:
-        raise HTTPException(
-            status_code=400, 
-            detail=f"Unsupported format standard. Matrix only permits: {', '.join(valid_extensions)}"
-        )
-    
-    target_path = os.path.join(VAULT_DIR, file.filename)
-    logger.info(f"📥 Incoming UI upload detected: {file.filename}. Staging data frame stream...")
-    
-    try:
-        # Write the uploaded file blocks down to the secure vault directory disk layer
-        with open(target_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-            
-        logger.info(f"💾 Staged file saved locally. Deploying real-time semantic chunking...")
-        
-        # Instantly compile vectors into your database without requiring admin_ingest.py scripts
-        await rag_engine.ingest_document(target_path)
-        
-        return {
-            "status": "success",
-            "filename": file.filename,
-            "detail": "Document committed to local system vector storage map successfully."
-        }
-    except Exception as e:
-        logger.error(f"❌ Real-time UI ingestion failure for {file.filename}: {str(e)}")
-        if os.path.exists(target_path):
-            os.remove(target_path)  # Clean up partial fragments upon failure conditions
-        raise HTTPException(status_code=500, detail=f"Internal database ingestion compilation error: {str(e)}")
+#@router.post("/upload")
+#async def upload_document_endpoint(file: UploadFile = File(...)):
+#    """
+#    Secure file upload interceptor receiving binary file data frames via the UI,
+#    writing them safely to storage_vault, and executing real-time vector indexing.
+#    """
+#    valid_extensions = (".txt", ".md", ".pdf", ".docx")
+#    ext = os.path.splitext(file.filename)[1].lower()
+#    
+#    if ext not in valid_extensions:
+#        raise HTTPException(
+#            status_code=400, 
+#            detail=f"Unsupported format standard. Matrix only permits: {', '.join(valid_extensions)}"
+#        )
+#    
+#    target_path = os.path.join(VAULT_DIR, file.filename)
+#    logger.info(f"📥 Incoming UI upload detected: {file.filename}. Staging data frame stream...")
+#    
+#    try:
+#        # Write the uploaded file blocks down to the secure vault directory disk layer
+#        with open(target_path, "wb") as buffer:
+#            shutil.copyfileobj(file.file, buffer)
+#            
+#        logger.info(f"💾 Staged file saved locally. Deploying real-time semantic chunking...")
+#        
+#        # Instantly compile vectors into your database without requiring admin_ingest.py scripts
+#        await rag_engine.ingest_document(target_path)
+#        
+#        return {
+#           "status": "success",
+#           "filename": file.filename,
+#            "detail": "Document committed to local system vector storage map successfully."
+#        }
+#    except Exception as e:
+#        logger.error(f"❌ Real-time UI ingestion failure for {file.filename}: {str(e)}")
+#        if os.path.exists(target_path):
+#            os.remove(target_path)  # Clean up partial fragments upon failure conditions
+#        raise HTTPException(status_code=500, detail=f"Internal database ingestion compilation error: {str(e)}")
