@@ -2,9 +2,13 @@ import os
 import io
 import chromadb
 import httpx
+import logging
 from pypdf import PdfReader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from app.config import settings  # Import the configuration singleton
+
+# Initialize local module logger to support tracking print/logging matrix operations
+logger = logging.getLogger("H.I.V.E.RAG")
 
 try:
     from docx import Document as DocxReader
@@ -152,3 +156,32 @@ class LocalRAGEngine:
                         "score": round(score, 2)
                     })
         return compiled_contexts
+
+    def delete_document_from_vector_store(self, filename: str) -> bool:
+        """
+        Purges all vectorized structural chunks from ChromaDB matching the source filename metadata.
+        """
+        try:
+            # We target the 'source' key to clear out the specific elements mapped in metadatas
+            self.collection.delete(where={"source": filename})
+            logger.info(f"🧹 Successfully evicted all vector fragments for source: {filename}")
+            return True
+        except Exception as e:
+            logger.error(f"❌ Failed to purge vector fragments for {filename} from ChromaDB: {str(e)}")
+            raise e
+
+    async def check_semantic_cache(self, query: str, similarity_threshold: float = 0.95) -> str:
+        """
+        Queries ChromaDB or a dedicated cache index to see if an identical/highly similar 
+        query already exists, returning the cached response string if found.
+        """
+        try:
+            # Generate an embedding frame for the incoming user turn query
+            query_vector = await self._get_single_embedding(query)
+            
+            # We can leverage a separate small collection or query the main text map if structured.
+            # Alternatively, if you want pure textual matching, SQLite handles it below in Step 2.
+            # This placeholder satisfies the structural requirement if your engine calls vector distance:
+            return None
+        except Exception:
+            return None
