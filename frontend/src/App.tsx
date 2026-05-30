@@ -10,9 +10,15 @@ import 'prismjs/components/prism-bash';
 import { useOllamaStream } from './hooks/useOllamaStream';
 import type { Message, Citation } from './hooks/useOllamaStream';
 
+// 🧠 Import the brand new control dashboard pane component
+import HiveControlDashboard from './HiveControlDashboard';
+
 export default function App() {
   const [isMobile, setIsMobile] = useState<boolean>(window.innerWidth < 1024);
   const [menuOpen, setMenuOpen] = useState<boolean>(false);
+  
+  // ⚡ View state to toggle between System Chat and Dashboard Metrics
+  const [showDashboard, setShowDashboard] = useState<boolean>(false);
 
   // Viewport observer loop
   useEffect(() => {
@@ -43,13 +49,10 @@ export default function App() {
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [incomingCitations, setIncomingCitations] = useState<Citation[]>([]);
   
-  // Telemetry state buffer for direct backend streaming tracking
   const [telemetry, setTelemetry] = useState<string[]>(['Awaiting prompt pipeline dispatch...']);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const terminalEndRef = useRef<HTMLDivElement>(null);
-  
-  // UX MODIFICATION: Dynamic anchor reference variable targeting the chat window matrix floor
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const [chatHistory, setChatHistory] = useState<Message[]>(() => {
@@ -57,26 +60,23 @@ export default function App() {
     return cachedMemory ? JSON.parse(cachedMemory) : [];
   });
   
-  // Persistence and syntax highlighters 
   useEffect(() => {
     localStorage.setItem('HIVE_SESSION_THREAD', JSON.stringify(chatHistory));
     Prism.highlightAll();
   }, [chatHistory, streamData]);
 
-  // UX MODIFICATION: Auto-Scroll window layout manager logic sequence tracking token streams
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [chatHistory, streamData, isStreaming]);
 
-  // Fetch unique vectorized vault manifest structures
+  // Sync files whenever status upgrades or window changes
   useEffect(() => {
     fetch('http://127.0.0.1:8000/api/vault/files')
       .then(res => res.json())
       .then(data => { if (data.files) setVaultFiles(data.files); })
       .catch(err => console.error("Vault error:", err));
-  }, [uploadStatus]);
+  }, [uploadStatus, showDashboard]);
 
-  // FIXED LINE 80: Removed unused 'err' variable completely
   useEffect(() => {
     const pollInterval = setInterval(async () => {
       try {
@@ -86,20 +86,18 @@ export default function App() {
           setTelemetry((prev) => [...prev, ...data.events]);
         }
       } catch {
-        // Quietly absorb temporary connection gaps during service deployment cycles
+        // Absorbing gaps quietly
       }
     }, 1200);
     return () => clearInterval(pollInterval);
   }, []);
 
-  // Force auto-scroll adjustments inside the telemetry panel
   useEffect(() => {
     terminalEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [telemetry]);
 
   const SYSTEM_PROMPT = "You are H.I.V.E., a hardened local AI orchestration assistant.";
 
-  // Dispatch payloads and compile real-time event streaming token values
   const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!userInput.trim() || isStreaming) return;
@@ -123,7 +121,6 @@ export default function App() {
     }
   };
 
-  // Handle document binary file picking stream structures
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const targetFile = e.target.files?.[0];
     if (!targetFile) return;
@@ -140,7 +137,6 @@ export default function App() {
         method: 'POST',
         body: formData,
       });
-
       const data = await response.json();
 
       if (response.ok) {
@@ -153,10 +149,8 @@ export default function App() {
         setUploadMessage(`Error: ${data.detail || 'Upload pipeline failed.'}`);
         setTelemetry((prev) => [...prev, `ERROR: Ingestion phase failure. ${data.detail || 'Upload failed.'}`]);
       }
-    // FIXED LINE 148: Typed 'err' as 'unknown' and checked instance to eliminate explicit 'any' rule trip
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : 'Unknown exception occurred.';
-      console.error('H.I.V.E. UI Ingestion Exception:', err);
       setUploadStatus('ERROR');
       setUploadMessage('Error: Connection to H.I.V.E. gateway dropped.');
       setTelemetry((prev) => [...prev, `ERROR: Ingestion connection drop. ${errorMessage}`]);
@@ -174,6 +168,11 @@ export default function App() {
       setTelemetry(['Awaiting prompt pipeline dispatch...']);
     }
   };
+
+  // 🧠 INTERCEPT LAYER: Render dashboard view if toggled on
+  if (showDashboard) {
+    return <HiveControlDashboard onClose={() => setShowDashboard(false)} />;
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'row', height: '100vh', width: '100vw', background: 'var(--bg-darker)', color: 'var(--text-main)', overflow: 'hidden' }}>
@@ -195,6 +194,15 @@ export default function App() {
             <h1 style={{ margin: 0, fontSize: '1.2rem', letterSpacing: '2px', fontWeight: 800 }}>H.I.V.E.</h1>
           </div>
 
+          {/* DASHBOARD LINK ACCELERATOR SHORTCUT */}
+          <button 
+            type="button" 
+            onClick={() => { setShowDashboard(true); if(isMobile) setMenuOpen(false); }}
+            style={{ width: '100%', padding: '10px', background: 'rgba(6, 182, 212, 0.1)', border: '1px solid var(--neon-cyan)', color: 'var(--neon-cyan)', borderRadius: '6px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 'bold' }}
+          >
+            📊 OPEN HARDWARE ANALYTICS
+          </button>
+
           <div>
             <div style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--text-muted)', letterSpacing: '1px', marginBottom: '10px' }}>System Profile</div>
             <div style={{ background: 'var(--bg-darker)', padding: '12px', borderRadius: '6px', borderLeft: '3px solid var(--maroon-primary)', fontSize: '0.85rem' }}>
@@ -204,7 +212,6 @@ export default function App() {
 
           {/* KNOWLEDGE INGESTION PANEL */}
           <div>
-            <div style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--text-muted)', letterSpacing: '1px', marginBottom: '10px' }}>Knowledge Ingestion</div>
             <label style={{ 
               display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', 
               padding: '15px 10px', background: 'var(--bg-darker)', border: '1px dashed var(--border-glow)', 
@@ -396,7 +403,6 @@ export default function App() {
             </div>
           )}
 
-          {/* UX MODIFICATION: Pin alignment node ensuring prompt container anchors remain visible */}
           <div ref={messagesEndRef} />
         </section>
 
@@ -411,7 +417,7 @@ export default function App() {
               disabled={isStreaming}
               style={{ flex: 1, background: 'var(--bg-darker)', border: '1px solid var(--border-glow)', borderRadius: '6px', padding: '14px 18px', color: 'var(--text-main)', fontSize: '0.95rem', outline: 'none' }}
             />
-            <button type="submit" disabled={isStreaming || !userInput.trim()} style={{ background: isStreaming || !userInput.trim() ? '#1e293b' : 'linear-gradient(135deg, var(--maroon-primary), var(--maroon-glow))', color: 'var(--text-main)', border: 'none', padding: '0 25px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+            <button type="submit" disabled={isStreaming || !userInput.trim()} style={{ background: isStreaming || !userInput.trim() ? '#1e293b' : 'var(--maroon-primary)', border: 'none', color: '#fff', padding: '0 25px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>
               TRANSMIT
             </button>
           </form>

@@ -135,49 +135,50 @@ async def upload_document_endpoint(file: UploadFile = File(...)):
         logger.error(f"❌ Real-time UI ingestion failure inside main gateway: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Internal database ingestion compilation error: {str(e)}")
 
-@app.post("/api/chat/stream")
-async def stream_chat_response(payload: dict):
-    """Fuses database semantic context strings with model generations using local SSE frames."""
-    user_prompt = payload.get("message", "")
-    target_file = payload.get("target_file", None) # Maintains structural Vault filters
-    
-    # Extract historical vector contexts natively using your preserved threshold scoring logic
-    contexts = await rag_engine.query_knowledge_base(user_prompt, top_k=2, target_file=target_file)
-    
-    system_prompt = "You are H.I.V.E Core, an advanced, highly strategic localized AI intelligence construct."
-    if contexts:
-        context_str = "\n\n".join([c["text"] for c in contexts])
-        system_prompt += f"\nInject the following localized structural system database context profiles into your final response logic:\n{context_str}"
+#@app.post("/api/chat/stream")
+#async def stream_chat_response(payload: dict):
+#    """Fuses database semantic context strings with model generations using local SSE frames."""
+#    user_prompt = payload.get("message", "")
+#    target_file = payload.get("target_file", None) # Maintains structural Vault filters
+#    
+#    # Extract historical vector contexts natively using your preserved threshold scoring logic
+#    contexts = await rag_engine.query_knowledge_base(user_prompt, top_k=2, target_file=target_file)
+#    
+#    system_prompt = "You are H.I.V.E Core, an advanced, highly strategic localized AI intelligence construct."
+#    if contexts:
+#        context_str = "\n\n".join([c["text"] for c in contexts])
+#        system_prompt += f"\nInject the following localized structural system database context profiles into your final response logic:\n{context_str}"
+#
+#   async def ollama_generator():
+#       # Build URL dynamically via config singleton to protect Windows loopbacks
+#        ollama_url = f"{settings.OLLAMA_BASE_URL}/api/generate"
+#        ollama_payload = {
+#            "model": settings.OLLAMA_MODEL,
+#            "prompt": f"{system_prompt}\n\nUser: {user_prompt}\nResponse:",
+#            "stream": True
+#        }
+#        
+#        async with httpx.AsyncClient(timeout=60.0) as client:
+#            async with client.stream("POST", ollama_url, json=ollama_payload) as response:
+#                if response.status_code != 200:
+#                    yield f"data: {json.dumps({'error': 'Ollama connection failed'})}\n\n"
+#                    return
+#                
+#                async_lines = response.aiter_lines()
+#                async for line in async_lines:
+#                    if line:
+#                        parsed_line = json.loads(line)
+#                        token = parsed_line.get("response", "")
+#                        done = parsed_line.get("done", False)
+#                        
+#                        # Pack individual string components inside Server-Sent Event envelopes
+#                        yield f"data: {json.dumps({'token': token, 'done': done})}\n\n"
+#                       
+#                        if done:
+#                            break
+#
+#    return StreamingResponse(ollama_generator(), media_type="text/event-stream")
 
-    async def ollama_generator():
-        # Build URL dynamically via config singleton to protect Windows loopbacks
-        ollama_url = f"{settings.OLLAMA_BASE_URL}/api/generate"
-        ollama_payload = {
-            "model": settings.OLLAMA_MODEL,
-            "prompt": f"{system_prompt}\n\nUser: {user_prompt}\nResponse:",
-            "stream": True
-        }
-        
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            async with client.stream("POST", ollama_url, json=ollama_payload) as response:
-                if response.status_code != 200:
-                    yield f"data: {json.dumps({'error': 'Ollama connection failed'})}\n\n"
-                    return
-                
-                async_lines = response.aiter_lines()
-                async for line in async_lines:
-                    if line:
-                        parsed_line = json.loads(line)
-                        token = parsed_line.get("response", "")
-                        done = parsed_line.get("done", False)
-                        
-                        # Pack individual string components inside Server-Sent Event envelopes
-                        yield f"data: {json.dumps({'token': token, 'done': done})}\n\n"
-                        
-                        if done:
-                            break
-
-    return StreamingResponse(ollama_generator(), media_type="text/event-stream")
 
 # =========================================================================
 # 9. CORE ROOT LIVENESS ENDPOINT

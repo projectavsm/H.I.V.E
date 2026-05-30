@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import shutil
+import time
 import asyncio
 import httpx
 from fastapi import APIRouter, Request, HTTPException, UploadFile, File
@@ -12,7 +13,7 @@ from app.config import settings
 # 🧵 IMPORT ADVANCED CONTEXT HARVESTING SUITES
 from app.services.rag_service import LocalRAGEngine
 from app.tools.web_tool import AutonomousWebScraper
-from app.services.cache_service import cache_manager # 🧠 Import the brand new cache manager!
+from app.services.cache_service import SemanticCacheManager, cache_manager
 
 # Initialize high-performance logger mapped to the H.I.V.E Router channel
 logger = logging.getLogger("H.I.V.E.Router")
@@ -23,6 +24,9 @@ router = APIRouter()
 # Instantiate the local vector database retrieval model
 rag_engine = LocalRAGEngine()
 
+# Instantiating the brand new Semantic Vector Cache Engine
+cache_manager = SemanticCacheManager(rag_engine)
+
 # 📥 CONFIGURE LOCAL STORAGE VAULT DIRECTORY CONTRACT
 VAULT_DIR = os.path.join(os.getcwd(), "storage_vault")
 
@@ -32,8 +36,28 @@ if not os.path.exists(VAULT_DIR):
     logger.info(f"📁 Initialized empty document ingestion target matrix at: {VAULT_DIR}")
 
 # =========================================================================
-# 1. UI DATA VAULT MANAGEMENT ENDPOINTS (GET & DELETE)
+# 1. UI PERFORMANCE & VAULT ANALYTICS ENDPOINTS (GET & DELETE)
 # =========================================================================
+@router.get("/vault/analytics")
+async def get_performance_analytics():
+    """Exposes current performance optimization metrics to the frontend ticker dashboards"""
+    try:
+        all_files = rag_engine.get_all_ingested_files()
+        
+        # Pull total counts directly out of ChromaDB collections mapping metrics
+        total_chunks = len(rag_engine.collection.get(include=[])["ids"])
+        
+        return {
+            "cache_hits": cache_manager.hit_count,
+            "cache_misses": cache_manager.miss_count,
+            "vram_seconds_saved": round(cache_manager.vram_seconds_saved, 2),
+            "active_documents": len(all_files),
+            "total_vector_fragments": total_chunks
+        }
+    except Exception as e:
+        logger.error(f"❌ Error compiling telemetry parameters: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.get("/vault/files")
 async def get_vault_files():
     """Returns list of all successfully vectorized files for the sidebar UI"""
@@ -50,8 +74,7 @@ async def delete_vault_file(filename: str):
     Removes physical tracking files and completely purges vectorized nodes from ChromaDB.
     """
     target_path = os.path.join(VAULT_DIR, filename)
-    logger.warning(f"🗑️ Initiation sequence caught to wipe document footprint: {filename}")
-    
+    logger.warning(f"🗑️ Purge request intercepted for document: {filename}")
     try:
         # 1. Instruct the RAG Engine to un-index the structural chunks inside ChromaDB
         rag_engine.delete_document_from_vector_store(filename)
@@ -59,20 +82,20 @@ async def delete_vault_file(filename: str):
         # 2. Safely wipe the physical file footprint from local drive matrix if it exists
         if os.path.exists(target_path):
             os.remove(target_path)
-            logger.info(f"💾 Physical storage vault copy eradicated safely: {target_path}")
+            logger.info(f"💾 Physical workspace clone unlinked safely: {target_path}")
         else:
             logger.warning(f"⚠️ Physical file path not present on local machine workspace, skipped disk cycle.")
 
         return {
             "status": "success",
-            "detail": f"Document '{filename}' has been completely un-indexed and purged from system boundaries."
+            "detail": f"Document '{filename}' fully expunged from system boundaries."
         }
     except Exception as e:
-        logger.error(f"❌ Collapse encountered during deletion routine: {str(e)}")
+        logger.error(f"❌ Deletion lifecycle broken: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to execute document execution clean cycle: {str(e)}")
 
 # =========================================================================
-# 2. CORE REFACTORED CHAT COMPLETION INTERFACE (WITH INTEGRATED SEMANTIC CACHE)
+# 2. CORE REFACTORED CHAT COMPLETION INTERFACE (WITH SEMANTIC CACHE MATRIX)
 # =========================================================================
 @router.post("/chat/stream")
 async def chat_completion_endpoint(body: ChatCompletionRequest):
@@ -81,50 +104,54 @@ async def chat_completion_endpoint(body: ChatCompletionRequest):
     applying proactive server-side FIFO context sliding-window pruning,
     evaluating semantic cache matches, and executing simultaneous Local RAG Ingestion & Web Scraping loops.
     """
-    # -------------------------------------------------------------------------
-    # DEFENSE LAYER 1: MIDDLEWARE-LEVEL SLIDING CONTEXT WINDOW (FIFO PRUNING)
-    # -------------------------------------------------------------------------
     MAX_HISTORIC_MESSAGES = 10
     raw_message_count = len(body.messages)
     messages_payload = [msg.model_dump() for msg in body.messages]
     
     # Track historic clipping occurrences for system diagnostic visibility
-    history_pruned = False
-    pruned_count = 0
+    history_pruned = raw_message_count > MAX_HISTORIC_MESSAGES
+    pruned_count = raw_message_count - MAX_HISTORIC_MESSAGES if history_pruned else 0
 
-    if raw_message_count > MAX_HISTORIC_MESSAGES:
+    if history_pruned:
         logger.warning(
             f"⚠️ Context bloat caught ({raw_message_count} messages). "
             f"Pruning oldest records to match strict FIFO VRAM safety bounds."
         )
         messages_payload = messages_payload[-MAX_HISTORIC_MESSAGES:]
-        history_pruned = True
-        pruned_count = raw_message_count - MAX_HISTORIC_MESSAGES
 
     # Extract the raw statement of the active user query turn
     last_user_message = messages_payload[-1]["content"] if messages_payload else ""
-    logger.info(f"⚡ Processing core inference stream for turn query: '{last_user_message[:40]}...'")
+    logger.info(f"⚡ Core Stream Evaluation initiated for turn query: '{last_user_message[:40]}...'")
     
-    # 🧠 BRAIN INTERCEPT: Verify Cache footprint before engaging Ollama VRAM channels
-    cached_ai_answer = cache_manager.lookup_exact_cache(last_user_message)
+    # 🧠 SEMANTIC BREAKPOINT INTERCEPT: Check vector distances before engaging Ollama VRAM channels
+    cached_ai_answer, latency_saved = await cache_manager.lookup_semantic_cache(last_user_message)
     
     if cached_ai_answer:
         logger.info("🚀 Routing inference query down high-speed semantic cache shortcut.")
         async def cached_stream_generator():
-            yield f"data: {json.dumps({'status_update': '🎯 Cache Hit! Stream offloading instantly...', 'done': False})}\n\n"
-            await asyncio.sleep(0.05)
+            yield f"data: {json.dumps({'status_update': f'🎯 Semantic Cache Hit! saved approx {latency_saved}s VRAM load time.', 'done': False})}\n\n"
+            await asyncio.sleep(0.04)
             # Break down text into small chunks to preserve the look and feel of real-time streaming tokens
             words = cached_ai_answer.split(" ")
             for i, word in enumerate(words):
                 spaced_word = word if i == 0 else " " + word
                 yield f"data: {json.dumps({'token': spaced_word, 'done': False})}\n\n"
-                await asyncio.sleep(0.01) # Ultra-fast sub-millisecond response latency
+                await asyncio.sleep(0.01) # Ultra-fast response latency
             yield f"data: {json.dumps({'token': '', 'done': True})}\n\n"
         
-        return StreamingResponse(cached_stream_generator(), media_type="text/event-stream")
+        return StreamingResponse(
+            cached_stream_generator(), 
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no"
+            }
+        )
 
     # If cache is a MISS, drop down into standard engine retrieval matrix pipelines natively...
     async def sse_event_generator():
+        start_generation_time = time.time()
         rag_context = ""
         citations = []
         rag_matched = False
@@ -135,13 +162,12 @@ async def chat_completion_endpoint(body: ChatCompletionRequest):
 
         # Emit initial sliding context history pruning metrics down the telemetry wire if tripped
         if history_pruned:
-            yield f"data: {json.dumps({'status_update': f'Context bloat caught. Pruned {pruned_count} historical messages.', 'done': False})}\n\n"
+            yield f"data: {json.dumps({'status_update': f'Context pruned by {pruned_count} indices.', 'done': False})}\n\n"
 
         # 🧵 STEP 1: Evaluate Strategy & Query Local ChromaDB Vector Database
         if body.rag_mode != "off" and last_user_message:
             logger.info(f"🔍 Executing ChromaDB semantic vector search strategy [Mode: {body.rag_mode}]")
             yield f"data: {json.dumps({'status_update': 'Querying local ChromaDB vector store...', 'done': False})}\n\n"
-            await asyncio.sleep(0.1)  # Brief async context yield breather
             
             try:
                 # If mode is set to strict constraint, restrict lookup explicitly to target_file metadata 
@@ -164,7 +190,7 @@ async def chat_completion_endpoint(body: ChatCompletionRequest):
                 else:
                     logger.warning("⚠️ RAG Search executed successfully but found 0 matching text blocks above score threshold rules.")
             except Exception as e:
-                logger.error(f"❌ RAG Retrieval internal fault: {str(e)}")
+                logger.error(f"❌ Search breakdown: {str(e)}")
                 yield f"data: {json.dumps({'status_update': f'❌ RAG Error: {str(e)}', 'done': False})}\n\n"
 
         # 🧵 STEP 2: Deploy Autonomous Web Scraper (Agent Target Trigger Words Intercept)
@@ -172,20 +198,16 @@ async def chat_completion_endpoint(body: ChatCompletionRequest):
         if any(word in last_user_message.lower() for word in trigger_words):
             web_triggered = True
             logger.info(f"🌐 Scraper Match: Target trigger detected. Dispatching DuckDuckGo scraper loop...")
-            yield f"data: {json.dumps({'status_update': 'Agent triggered. Launching Autonomous Web Scraper...', 'done': False})}\n\n"
-            await asyncio.sleep(0.4) 
+            yield f"data: {json.dumps({'status_update': 'Agent triggered. Deploying Web Crawler...', 'done': False})}\n\n"
             
             try:
                 raw_web_data = await AutonomousWebScraper.fetch_live_web_context(last_user_message)
                 if raw_web_data:
-                    web_context = "\n[LIVE WEB SEARCH CONTEXT]:\n" + raw_web_data
+                    rag_context += "\n[LIVE WEB SEARCH CONTEXT]:\n" + raw_web_data
                     web_fragments_ingested = 3
                     logger.info("🟢 Web scraping complete. Grounded context matrix updated successfully.")
-                    yield f"data: {json.dumps({'status_update': 'Web scraping complete. Grounding context array...', 'done': False})}\n\n"
-                    await asyncio.sleep(0.2)
-                    rag_context += web_context
             except Exception as e:
-                logger.error(f"❌ Web Scraper execution internal fault: {str(e)}")
+                logger.error(f"❌ Scraper failure: {str(e)}")
                 yield f"data: {json.dumps({'status_update': f'❌ Scraper Error: {str(e)}', 'done': False})}\n\n"
 
         # 🧵 STEP 3: Assemble Context Re-Alignment Matrix & System Directive Constraints
@@ -193,11 +215,7 @@ async def chat_completion_endpoint(body: ChatCompletionRequest):
         augmented_system_instructions = (
             f"{base_system_prompt}\n\n"
             f"CRITICAL SYSTEM DIRECTIVE:\n"
-            f"You are running within local machine limits. Prioritize facts, metrics, and data provided "
-            f"in the context blocks below over your pre-trained textbook base weights. If the data is present, "
-            f"use it as your absolute source-of-truth.\n"
-            f"STRICT WEB RULE: When responding to a live search or web query, use ONLY the specific text strings "
-            f"provided inside the [LIVE WEB SEARCH CONTEXT] block below. Do not invent news headlines or fallback to historical data loops.\n"
+            f"Prioritize facts, metrics, and data provided in context blocks over base weights.\n"
             f"{rag_context}"
         )
 
@@ -205,10 +223,7 @@ async def chat_completion_endpoint(body: ChatCompletionRequest):
         if messages_payload and messages_payload[0]["role"] == "system":
             messages_payload[0]["content"] = augmented_system_instructions
         else:
-            messages_payload.insert(0, {
-                "role": "system", 
-                "content": augmented_system_instructions
-            })
+            messages_payload.insert(0, {"role": "system", "content": augmented_system_instructions})
 
         # Compile total tracking telemetry measurements to expose internal engine layers
         telemetry_payload = {
@@ -266,11 +281,19 @@ async def chat_completion_endpoint(body: ChatCompletionRequest):
                             yield f"data: {json.dumps({'token': content_token, 'done': done_flag})}\n\n"
                             
                             if done_flag:
-                                # 🧠 CACHE COMMIT TRANSACTION: Commit newly minted execution safely into SQLite 
+                                total_generation_latency = time.time() - start_generation_time
                                 complete_text = "".join(full_response_accumulator)
                                 if complete_text.strip():
-                                    cache_manager.commit_to_cache(last_user_message, complete_text)
-                                    logger.info("💾 Frame committed successfully into Semantic Cache index tables.")
+        # Check if we can commit asynchronously to prevent loop collisions
+                                    try:
+                                        loop = asyncio.get_running_loop()
+                                        if asyncio.iscoroutinefunction(cache_manager.commit_to_cache):
+                                            loop.create_task(cache_manager.commit_to_cache(last_user_message, complete_text, total_generation_latency))
+                                        else:
+                # If it's a regular synchronous def function, run it in an executor thread
+                                            loop.run_in_executor(None, cache_manager.commit_to_cache, last_user_message, complete_text, total_generation_latency)
+                                    except Exception as cache_err:
+                                        logger.error(f"⚠️ Cache tracking optimization bypass: {cache_err}")
                                 break
                         except json.JSONDecodeError:
                             continue
